@@ -49,10 +49,14 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: "npm"
 
       - name: Install dependencies
-        run: npm ci
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install --no-package-lock --no-audit --no-fund
+          fi
 
       - name: Lint and type-check
         run: npm run lint
@@ -80,8 +84,10 @@ jobs:
 
       - name: Package downloadable release files
         shell: bash
+        env:
+          VERSION: ${{ steps.bump.outputs.version }}
+          REPO: ${{ github.repository }}
         run: |
-          VERSION="${{ steps.bump.outputs.version }}"
           mkdir -p release-artifacts
 
           # 1. Cross-platform portable ZIP bundle
@@ -91,23 +97,27 @@ jobs:
           tar -czf "release-artifacts/tamagotchi-v${VERSION}-web.tar.gz" -C dist .
 
           # 3. SHA-256 verification checksums
-          (cd release-artifacts && sha256sum tamagotchi-v${VERSION}-web.zip tamagotchi-v${VERSION}-web.tar.gz > "tamagotchi-v${VERSION}-checksums.sha256")
+          (cd release-artifacts && sha256sum "tamagotchi-v${VERSION}-web.zip" "tamagotchi-v${VERSION}-web.tar.gz" > "tamagotchi-v${VERSION}-checksums.sha256")
 
           # 4. Machine-readable updater manifest (latest.json)
-          cat <<EOF > release-artifacts/latest.json
-          {
-            "version": "${VERSION}",
-            "tag": "v${VERSION}",
-            "publishedAt": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
-            "repository": "${{ github.repository }}",
-            "releaseUrl": "https://github.com/${{ github.repository }}/releases/tag/v${VERSION}",
-            "assets": {
-              "webZip": "https://github.com/${{ github.repository }}/releases/download/v${VERSION}/tamagotchi-v${VERSION}-web.zip",
-              "webTarGz": "https://github.com/${{ github.repository }}/releases/download/v${VERSION}/tamagotchi-v${VERSION}-web.tar.gz",
-              "checksums": "https://github.com/${{ github.repository }}/releases/download/v${VERSION}/tamagotchi-v${VERSION}-checksums.sha256"
-            }
-          }
-          EOF
+          node -e '
+            const fs = require("node:fs");
+            const v = process.env.VERSION;
+            const repo = process.env.REPO;
+            const manifest = {
+              version: v,
+              tag: `v${v}`,
+              publishedAt: new Date().toISOString(),
+              repository: repo,
+              releaseUrl: `https://github.com/${repo}/releases/tag/v${v}`,
+              assets: {
+                webZip: `https://github.com/${repo}/releases/download/v${v}/tamagotchi-v${v}-web.zip`,
+                webTarGz: `https://github.com/${repo}/releases/download/v${v}/tamagotchi-v${v}-web.tar.gz`,
+                checksums: `https://github.com/${repo}/releases/download/v${v}/tamagotchi-v${v}-checksums.sha256`,
+              },
+            };
+            fs.writeFileSync("release-artifacts/latest.json", JSON.stringify(manifest, null, 2) + "\n");
+          '
 
       - name: Create GitHub Release with downloadable assets
         env:
