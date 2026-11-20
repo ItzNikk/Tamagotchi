@@ -1,8 +1,8 @@
 {
-  "version": "0.1.0",
-  "releasedAt": "2026-11-20T00:00:00.000Z",
-  "commitSha": "",
+  "version": "0.2.0",
+  "releasedAt": "2026-11-20T10:48:00.818Z",
+  "commitSha": "906a54f",
   "repository": "ItzNikk/Tamagotchi",
-  "releaseUrl": "https://github.com/ItzNikk/Tamagotchi/releases/latest",
-  "notes": "Initial Tamagotchi release with iOS Liquid Glass UI, three-way navigation, multi-platform builds, and in-app updater."
+  "releaseUrl": "https://github.com/ItzNikk/Tamagotchi/releases/tag/v0.2.0",
+  "notes": "feat: enable multi-platform support"
 }
