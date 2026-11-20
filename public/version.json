@@ -1,8 +1,8 @@
 {
-  "version": "0.4.1",
-  "releasedAt": "2026-11-20T12:08:23.169Z",
-  "commitSha": "650fb78",
+  "version": "0.4.2",
+  "releasedAt": "2026-11-20T12:31:38.694Z",
+  "commitSha": "1a6edac",
   "repository": "ItzNikk/Tamagotchi",
-  "releaseUrl": "https://github.com/ItzNikk/Tamagotchi/releases/tag/v0.4.1",
-  "notes": "chore(release): improve versioning and update release flow"
+  "releaseUrl": "https://github.com/ItzNikk/Tamagotchi/releases/tag/v0.4.2",
+  "notes": "ci: update release workflow and desktop config"
 }
