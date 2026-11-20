@@ -87,8 +87,49 @@ interface GitHubReleaseResponse {
   }>;
 }
 
+export type DevicePlatform =
+  | 'windows'
+  | 'macos'
+  | 'linux'
+  | 'android'
+  | 'ios'
+  | 'web';
+
+export function detectPlatform(): DevicePlatform {
+  if (typeof navigator === 'undefined') return 'web';
+  const ua = navigator.userAgent.toLowerCase();
+  if (/android/.test(ua)) return 'android';
+  if (/iphone|ipad|ipod/.test(ua)) return 'ios';
+  if (/win/.test(ua)) return 'windows';
+  if (/mac/.test(ua)) return 'macos';
+  if (/linux/.test(ua)) return 'linux';
+  return 'web';
+}
+
+export function findRecommendedAsset(
+  assets: ReleaseAsset[],
+  platform: DevicePlatform,
+): ReleaseAsset | null {
+  if (assets.length === 0) return null;
+  const matchers: Record<DevicePlatform, RegExp[]> = {
+    windows: [/setup\.exe$/i, /\.exe$/i],
+    android: [/\.apk$/i],
+    ios: [/\.ipa$/i],
+    macos: [/\.dmg$/i],
+    linux: [/\.appimage$/i, /\.tar\.gz$/i],
+    web: [/web\.zip$/i],
+  };
+
+  for (const pattern of matchers[platform]) {
+    const found = assets.find((asset) => pattern.test(asset.name));
+    if (found) return found;
+  }
+  return null;
+}
+
 export function useAppUpdater() {
   const currentVersion = normalizeVersion(__APP_VERSION__);
+  const platform = detectPlatform();
   const [githubRepo, setGithubRepoState] = useState<string>(getInitialRepo);
   const [status, setStatus] = useState<UpdateStatus>('idle');
   const [latestRelease, setLatestRelease] = useState<ReleaseInfo | null>(null);
@@ -104,6 +145,12 @@ export function useAppUpdater() {
   const swRegistrationRef = useRef<ServiceWorkerRegistration | null>(null);
 
   useEffect(() => {
+    const isFileProtocol = window.location.protocol === 'file:';
+    const isCapacitorNative = 'Capacitor' in window;
+    if (isFileProtocol || isCapacitorNative || !('serviceWorker' in navigator)) {
+      return;
+    }
+
     const updateSW = registerSW({
       immediate: true,
       onNeedRefresh() {
@@ -143,11 +190,14 @@ export function useAppUpdater() {
         }
       }
 
-      // 2. Check deployed /version.json (always bypassed from cache)
+      // 2. Check deployed version.json (always bypassed from cache)
       try {
-        const res = await fetch(`/version.json?t=${Date.now()}`, {
-          cache: 'no-store',
-        });
+        const res = await fetch(
+          `${import.meta.env.BASE_URL}version.json?t=${Date.now()}`,
+          {
+            cache: 'no-store',
+          },
+        );
         if (res.ok) {
           const manifest = (await res.json()) as VersionManifestResponse;
           if (!discoveredRepo && manifest.repository && REPO_PATTERN.test(manifest.repository)) {
@@ -339,8 +389,14 @@ export function useAppUpdater() {
       latestRelease && compareSemver(latestRelease.version, currentVersion) > 0,
     );
 
+  const recommendedAsset = latestRelease
+    ? findRecommendedAsset(latestRelease.assets, platform)
+    : null;
+
   return {
     currentVersion,
+    platform,
+    recommendedAsset,
     githubRepo,
     status,
     latestRelease,

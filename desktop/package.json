@@ -1,0 +1,60 @@
+{
+  "name": "tamagotchi-desktop",
+  "productName": "Tamagotchi",
+  "version": "0.1.0",
+  "description": "Tamagotchi multi-platform study and professional companion desktop app.",
+  "main": "main.cjs",
+  "private": true,
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^35.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.itznikk.tamagotchi",
+    "productName": "Tamagotchi",
+    "directories": {
+      "output": "release-out"
+    },
+    "files": [
+      "main.cjs",
+      "web/**/*"
+    ],
+    "win": {
+      "icon": "icon.png",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        },
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "Tamagotchi-v${version}-Windows-Setup.${ext}"
+    },
+    "portable": {
+      "artifactName": "Tamagotchi-v${version}-Windows-Portable.${ext}"
+    },
+    "mac": {
+      "icon": "icon.png",
+      "category": "public.app-category.education",
+      "identity": null,
+      "target": ["dmg"],
+      "artifactName": "Tamagotchi-v${version}-macOS.${ext}"
+    },
+    "linux": {
+      "icon": "icon.png",
+      "category": "Education",
+      "target": ["AppImage"],
+      "artifactName": "Tamagotchi-v${version}-Linux.${ext}"
+    }
+  }
+}

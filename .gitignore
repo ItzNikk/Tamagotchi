@@ -2,6 +2,16 @@ node_modules/
 dist/
 dev-dist/
 release-artifacts/
+desktop/node_modules/
+desktop/web/
+desktop/release-out/
+desktop/icon.png
+mobile/node_modules/
+mobile/www/
+mobile/android/
+mobile/ios/
+*.apk
+*.ipa
 .env
 .env.local
 .DS_Store

@@ -1,4 +1,4 @@
-name: Auto Release & Build Download Files
+name: Auto Release & Multi-Platform Builds
 
 on:
   push:
@@ -30,9 +30,8 @@ concurrency:
 
 jobs:
   release:
-    name: Version, Build & Publish GitHub Release
+    name: Version, Web Bundle & GitHub Release
     runs-on: ubuntu-latest
-    # Prevent infinite loops from automated version bump commits
     if: "!contains(github.event.head_commit.message, '[skip ci]') && github.actor != 'github-actions[bot]'"
     outputs:
       version: ${{ steps.bump.outputs.version }}
@@ -77,12 +76,21 @@ jobs:
           git tag -a "v${{ steps.bump.outputs.version }}" -m "Release v${{ steps.bump.outputs.version }}"
           git push origin HEAD:main --follow-tags
 
-      - name: Build production Web & PWA bundle
+      - name: Build portable & native web bundle (relative paths)
         env:
           VITE_GITHUB_REPO: ${{ github.repository }}
+          VITE_BASE_PATH: "./"
+          VITE_DISABLE_PWA: "true"
         run: npm run build
 
-      - name: Package downloadable release files
+      - name: Upload native web bundle for Desktop, Android & iOS jobs
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-dist-native
+          path: dist/
+          retention-days: 1
+
+      - name: Package downloadable Web bundles
         shell: bash
         env:
           VERSION: ${{ steps.bump.outputs.version }}
@@ -104,6 +112,7 @@ jobs:
             const fs = require("node:fs");
             const v = process.env.VERSION;
             const repo = process.env.REPO;
+            const base = `https://github.com/${repo}/releases/download/v${v}`;
             const manifest = {
               version: v,
               tag: `v${v}`,
@@ -111,15 +120,21 @@ jobs:
               repository: repo,
               releaseUrl: `https://github.com/${repo}/releases/tag/v${v}`,
               assets: {
-                webZip: `https://github.com/${repo}/releases/download/v${v}/tamagotchi-v${v}-web.zip`,
-                webTarGz: `https://github.com/${repo}/releases/download/v${v}/tamagotchi-v${v}-web.tar.gz`,
-                checksums: `https://github.com/${repo}/releases/download/v${v}/tamagotchi-v${v}-checksums.sha256`,
+                windowsSetup: `${base}/Tamagotchi-v${v}-Windows-Setup.exe`,
+                windowsPortable: `${base}/Tamagotchi-v${v}-Windows-Portable.exe`,
+                macDmg: `${base}/Tamagotchi-v${v}-macOS.dmg`,
+                linuxAppImage: `${base}/Tamagotchi-v${v}-Linux.AppImage`,
+                androidApk: `${base}/Tamagotchi-v${v}-Android.apk`,
+                iosIpa: `${base}/Tamagotchi-v${v}-iOS-unsigned.ipa`,
+                webZip: `${base}/tamagotchi-v${v}-web.zip`,
+                webTarGz: `${base}/tamagotchi-v${v}-web.tar.gz`,
+                checksums: `${base}/tamagotchi-v${v}-checksums.sha256`,
               },
             };
             fs.writeFileSync("release-artifacts/latest.json", JSON.stringify(manifest, null, 2) + "\n");
           '
 
-      - name: Create GitHub Release with downloadable assets
+      - name: Create GitHub Release with Web artifacts
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -130,20 +145,277 @@ jobs:
             --generate-notes \
             --latest
 
-      - name: Upload GitHub Pages artifact for live OTA PWA updates
-        uses: actions/upload-pages-artifact@v3
+  build-desktop:
+    name: Build Desktop (${{ matrix.label }})
+    needs: release
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Windows .exe
+            os: windows-latest
+            args: --win nsis portable
+            ext: exe
+          - label: macOS .dmg
+            os: macos-latest
+            args: --mac dmg
+            ext: dmg
+          - label: Linux .AppImage
+            os: ubuntu-latest
+            args: --linux AppImage
+            ext: AppImage
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
         with:
-          path: ./dist
+          ref: ${{ needs.release.outputs.tag }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Download compiled web bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: web-dist-native
+          path: desktop/web
+
+      - name: Sync version and app icon
+        shell: bash
+        env:
+          VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          cp public/pwa-512x512.png desktop/icon.png
+          node -e '
+            const fs = require("node:fs");
+            const p = "desktop/package.json";
+            const pkg = JSON.parse(fs.readFileSync(p, "utf8"));
+            pkg.version = process.env.VERSION;
+            fs.writeFileSync(p, JSON.stringify(pkg, null, 2) + "\n");
+          '
+
+      - name: Install desktop packager dependencies
+        working-directory: desktop
+        run: npm install --no-package-lock --no-audit --no-fund
+
+      - name: Build native installer (${{ matrix.label }})
+        working-directory: desktop
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: npx electron-builder ${{ matrix.args }}
+
+      - name: Upload installer to GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.release.outputs.tag }}
+          EXT: ${{ matrix.ext }}
+        run: |
+          shopt -s nullglob
+          FILES=(desktop/release-out/*.${EXT})
+          if [ ${#FILES[@]} -eq 0 ]; then
+            echo "No *.${EXT} files found in desktop/release-out/"
+            ls -la desktop/release-out/ || true
+            exit 1
+          fi
+          gh release upload "$TAG" "${FILES[@]}" --clobber
+
+  build-android:
+    name: Build Android .apk
+    needs: release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release.outputs.tag }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Setup Java 21 for Android Gradle
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Download compiled web bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: web-dist-native
+          path: mobile/www
+
+      - name: Install Capacitor & generate Android project
+        working-directory: mobile
+        env:
+          VERSION: ${{ needs.release.outputs.version }}
+          BUILD_NUM: ${{ github.run_number }}
+        run: |
+          npm install --no-package-lock --no-audit --no-fund
+          npx cap add android
+          npx cap sync android
+          node -e '
+            const fs = require("node:fs");
+            const p = "android/app/build.gradle";
+            let gradle = fs.readFileSync(p, "utf8");
+            gradle = gradle.replace(/versionCode\s+\d+/, `versionCode ${process.env.BUILD_NUM}`);
+            gradle = gradle.replace(/versionName\s+"[^"]+"/, `versionName "${process.env.VERSION}"`);
+            fs.writeFileSync(p, gradle);
+          '
+
+      - name: Compile Android APK
+        working-directory: mobile/android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+      - name: Upload Android APK to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.release.outputs.tag }}
+          VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          cp mobile/android/app/build/outputs/apk/debug/app-debug.apk "Tamagotchi-v${VERSION}-Android.apk"
+          gh release upload "$TAG" "Tamagotchi-v${VERSION}-Android.apk" --clobber
+
+  build-ios:
+    name: Build iOS .ipa (Unsigned)
+    needs: release
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release.outputs.tag }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Download compiled web bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: web-dist-native
+          path: mobile/www
+
+      - name: Install Capacitor & generate iOS project
+        working-directory: mobile
+        run: |
+          npm install --no-package-lock --no-audit --no-fund
+          npx cap add ios
+          npx cap sync ios
+
+      - name: Compile unsigned iOS .ipa
+        working-directory: mobile/ios/App
+        env:
+          VERSION: ${{ needs.release.outputs.version }}
+          BUILD_NUM: ${{ github.run_number }}
+        run: |
+          if [ -d "App.xcworkspace" ]; then
+            TARGET_FLAG="-workspace App.xcworkspace"
+          else
+            TARGET_FLAG="-project App.xcodeproj"
+          fi
+
+          xcodebuild $TARGET_FLAG \
+            -scheme App \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            MARKETING_VERSION="$VERSION" \
+            CURRENT_PROJECT_VERSION="$BUILD_NUM" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            build
+
+          APP_PATH=$(find build/Build/Products/Release-iphoneos -maxdepth 2 -name "*.app" | head -n 1)
+          if [ -z "$APP_PATH" ]; then
+            echo "Compiled .app bundle not found"
+            exit 1
+          fi
+
+          mkdir -p ipa-staging/Payload
+          cp -R "$APP_PATH" ipa-staging/Payload/
+          (cd ipa-staging && zip -r "$GITHUB_WORKSPACE/Tamagotchi-v${VERSION}-iOS-unsigned.ipa" Payload)
+
+      - name: Upload iOS IPA to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.release.outputs.tag }}
+          VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          gh release upload "$TAG" "$GITHUB_WORKSPACE/Tamagotchi-v${VERSION}-iOS-unsigned.ipa" --clobber
 
   deploy-pages:
     name: Deploy Live PWA (GitHub Pages)
     needs: release
     runs-on: ubuntu-latest
-    continue-on-error: true
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      - name: Check if GitHub Pages is enabled
+        id: pages-check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh api "repos/${{ github.repository }}/pages" > /dev/null 2>&1; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "GitHub Pages is not enabled yet. Enable it at https://github.com/${{ github.repository }}/settings/pages (Source: GitHub Actions) to activate live PWA hosting."
+          fi
+
+      - name: Checkout tagged release
+        if: steps.pages-check.outputs.enabled == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release.outputs.tag }}
+
+      - name: Setup Node.js
+        if: steps.pages-check.outputs.enabled == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        if: steps.pages-check.outputs.enabled == 'true'
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install --no-package-lock --no-audit --no-fund
+          fi
+
+      - name: Configure GitHub Pages
+        if: steps.pages-check.outputs.enabled == 'true'
+        id: pages
+        uses: actions/configure-pages@v5
+
+      - name: Build PWA for GitHub Pages base path
+        if: steps.pages-check.outputs.enabled == 'true'
+        env:
+          VITE_GITHUB_REPO: ${{ github.repository }}
+          VITE_BASE_PATH: "${{ steps.pages.outputs.base_path }}/"
+        run: npm run build
+
+      - name: Upload GitHub Pages artifact
+        if: steps.pages-check.outputs.enabled == 'true'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./dist
+
       - name: Deploy to GitHub Pages
+        if: steps.pages-check.outputs.enabled == 'true'
         id: deployment
         uses: actions/deploy-pages@v4

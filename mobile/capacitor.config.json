@@ -1,0 +1,15 @@
+{
+  "appId": "com.itznikk.tamagotchi",
+  "appName": "Tamagotchi",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https"
+  },
+  "ios": {
+    "contentInset": "never",
+    "backgroundColor": "#1b2217"
+  },
+  "android": {
+    "backgroundColor": "#1b2217"
+  }
+}

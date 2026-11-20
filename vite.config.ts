@@ -8,7 +8,12 @@ const pkg = JSON.parse(
   fs.readFileSync(new URL('./package.json', import.meta.url), 'utf8'),
 ) as { version?: string };
 
+const rawBase = process.env.VITE_BASE_PATH || '/';
+const base = rawBase === './' ? './' : rawBase.replace(/\/+$/, '') + '/';
+const assetPrefix = base === './' ? './' : base;
+
 export default defineConfig({
+  base,
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version ?? '0.1.0'),
     __BUILD_TIME__: JSON.stringify(new Date().toISOString()),
@@ -18,6 +23,7 @@ export default defineConfig({
     tailwindcss(),
     VitePWA({
       registerType: 'prompt',
+      injectRegister: null,
       includeAssets: [
         'icon.svg',
         'apple-touch-icon.png',
@@ -26,7 +32,7 @@ export default defineConfig({
         'pwa-maskable-512x512.png',
       ],
       manifest: {
-        id: '/',
+        id: assetPrefix,
         name: 'Tamagotchi',
         short_name: 'Tamagotchi',
         description:
@@ -34,23 +40,23 @@ export default defineConfig({
         theme_color: '#1b2217',
         background_color: '#1b2217',
         display: 'standalone',
-        start_url: '/',
-        scope: '/',
+        start_url: assetPrefix,
+        scope: assetPrefix,
         icons: [
           {
-            src: '/pwa-192x192.png',
+            src: `${assetPrefix}pwa-192x192.png`,
             sizes: '192x192',
             type: 'image/png',
             purpose: 'any',
           },
           {
-            src: '/pwa-512x512.png',
+            src: `${assetPrefix}pwa-512x512.png`,
             sizes: '512x512',
             type: 'image/png',
             purpose: 'any',
           },
           {
-            src: '/pwa-maskable-512x512.png',
+            src: `${assetPrefix}pwa-maskable-512x512.png`,
             sizes: '512x512',
             type: 'image/png',
             purpose: 'maskable',

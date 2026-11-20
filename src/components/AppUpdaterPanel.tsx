@@ -6,12 +6,28 @@ import {
   RefreshCw,
   Smartphone,
 } from 'lucide-react';
-import type { ReleaseInfo, UpdateStatus } from '../hooks/useAppUpdater';
+import type {
+  DevicePlatform,
+  ReleaseAsset,
+  ReleaseInfo,
+  UpdateStatus,
+} from '../hooks/useAppUpdater';
 import { usePWAInstall } from '../hooks/usePWAInstall';
 import { LiquidGlassSurface } from './LiquidGlassSurface';
 
+const PLATFORM_LABELS: Record<DevicePlatform, string> = {
+  windows: 'Windows',
+  macos: 'macOS',
+  linux: 'Linux',
+  android: 'Android',
+  ios: 'iOS',
+  web: 'Web',
+};
+
 interface AppUpdaterPanelProps {
   currentVersion: string;
+  platform: DevicePlatform;
+  recommendedAsset: ReleaseAsset | null;
   githubRepo: string;
   status: UpdateStatus;
   latestRelease: ReleaseInfo | null;
@@ -48,6 +64,8 @@ function formatDate(iso: string): string {
 
 export function AppUpdaterPanel({
   currentVersion,
+  platform,
+  recommendedAsset,
   githubRepo,
   status,
   latestRelease,
@@ -316,10 +334,35 @@ export function AppUpdaterPanel({
             </div>
           ) : null}
 
+          {recommendedAsset ? (
+            <div className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
+                <p className="text-xs font-medium text-white/75">
+                  Recommended for {PLATFORM_LABELS[platform]}
+                </p>
+                <p className="mt-0.5 truncate text-sm font-semibold text-white">
+                  {recommendedAsset.name}{' '}
+                  <span className="font-normal tabular-nums text-white/75">
+                    · {formatBytes(recommendedAsset.size)}
+                  </span>
+                </p>
+              </div>
+              <a
+                href={recommendedAsset.downloadUrl}
+                download={recommendedAsset.name}
+                rel="noopener noreferrer"
+                className="ios-glass-active-lens inline-flex min-h-[44px] shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-full px-5 py-2.5 text-sm font-semibold text-white transition-transform duration-150 hover:brightness-110 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/85"
+              >
+                <Download aria-hidden="true" className="h-4 w-4" />
+                Download for {PLATFORM_LABELS[platform]}
+              </a>
+            </div>
+          ) : null}
+
           {latestRelease.assets.length > 0 ? (
             <div className="py-4">
               <p className="mb-3 text-xs font-medium text-white/75">
-                Auto-Generated Download Files
+                All Auto-Generated Download Files
               </p>
               <div className="divide-y divide-white/10">
                 {latestRelease.assets.map((asset) => (

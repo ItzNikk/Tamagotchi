@@ -1,10 +1,17 @@
-import type { ReleaseInfo, UpdateStatus } from '../hooks/useAppUpdater';
+import type {
+  DevicePlatform,
+  ReleaseAsset,
+  ReleaseInfo,
+  UpdateStatus,
+} from '../hooks/useAppUpdater';
 import type { TabId } from '../types/navigation';
 import { AppUpdaterPanel } from './AppUpdaterPanel';
 import { LiquidGlassSurface } from './LiquidGlassSurface';
 
 export interface UpdaterViewProps {
   currentVersion: string;
+  platform: DevicePlatform;
+  recommendedAsset: ReleaseAsset | null;
   githubRepo: string;
   status: UpdateStatus;
   latestRelease: ReleaseInfo | null;

@@ -9,8 +9,7 @@ import { useAppUpdater } from './hooks/useAppUpdater';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
 import { NAV_TABS, type TabId } from './types/navigation';
 
-const BACKDROP_IMAGE_PATH =
-  '/assets/aistudio/upsampled_img_14256803433111796_f3e6cb2d.png';
+const BACKDROP_IMAGE_PATH = `${import.meta.env.BASE_URL}assets/aistudio/upsampled_img_14256803433111796_f3e6cb2d.png`;
 
 export function App() {
   const [activeTab, setActiveTab] = useState<TabId>('home');
@@ -86,6 +85,8 @@ export function App() {
                   activeTab={activeTab}
                   updater={{
                     currentVersion: updater.currentVersion,
+                    platform: updater.platform,
+                    recommendedAsset: updater.recommendedAsset,
                     githubRepo: updater.githubRepo,
                     status: updater.status,
                     latestRelease: updater.latestRelease,
