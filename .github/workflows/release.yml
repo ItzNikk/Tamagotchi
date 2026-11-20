@@ -1,4 +1,4 @@
-name: Auto Release & Multi-Platform Builds
+name: Auto Release & App Builds
 
 on:
   push:
@@ -18,6 +18,34 @@ on:
           - patch
           - minor
           - major
+      build_desktop:
+        description: "Also build Windows (.exe), macOS (.dmg), and Linux (.AppImage)"
+        required: false
+        default: false
+        type: boolean
+      build_ios:
+        description: "Also build unsigned iOS (.ipa)"
+        required: false
+        default: false
+        type: boolean
+      build_web_bundles:
+        description: "Also attach portable Web (.zip / .tar.gz) bundles"
+        required: false
+        default: false
+        type: boolean
+      deploy_pages:
+        description: "Also deploy live PWA to GitHub Pages"
+        required: false
+        default: false
+        type: boolean
+
+# Flip any flag below to "true" when you are ready to include other platforms on every push.
+env:
+  ENABLE_ANDROID: "true"
+  ENABLE_DESKTOP: "false"
+  ENABLE_IOS: "false"
+  ENABLE_WEB_BUNDLES: "false"
+  ENABLE_PAGES: "false"
 
 permissions:
   contents: write
@@ -30,14 +58,44 @@ concurrency:
 
 jobs:
   release:
-    name: Version, Web Bundle & GitHub Release
+    name: Version & Build Web Bundle
     runs-on: ubuntu-latest
     if: "!contains(github.event.head_commit.message, '[skip ci]') && github.actor != 'github-actions[bot]'"
     outputs:
       version: ${{ steps.bump.outputs.version }}
       tag: ${{ steps.bump.outputs.tag }}
+      run_android: ${{ steps.flags.outputs.run_android }}
+      run_desktop: ${{ steps.flags.outputs.run_desktop }}
+      run_ios: ${{ steps.flags.outputs.run_ios }}
+      run_web_bundles: ${{ steps.flags.outputs.run_web_bundles }}
+      run_pages: ${{ steps.flags.outputs.run_pages }}
 
     steps:
+      - name: Resolve active build targets
+        id: flags
+        run: |
+          echo "run_android=${ENABLE_ANDROID}" >> "$GITHUB_OUTPUT"
+          if [ "${{ inputs.build_desktop }}" = "true" ] || [ "${ENABLE_DESKTOP}" = "true" ]; then
+            echo "run_desktop=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run_desktop=false" >> "$GITHUB_OUTPUT"
+          fi
+          if [ "${{ inputs.build_ios }}" = "true" ] || [ "${ENABLE_IOS}" = "true" ]; then
+            echo "run_ios=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run_ios=false" >> "$GITHUB_OUTPUT"
+          fi
+          if [ "${{ inputs.build_web_bundles }}" = "true" ] || [ "${ENABLE_WEB_BUNDLES}" = "true" ]; then
+            echo "run_web_bundles=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run_web_bundles=false" >> "$GITHUB_OUTPUT"
+          fi
+          if [ "${{ inputs.deploy_pages }}" = "true" ] || [ "${ENABLE_PAGES}" = "true" ]; then
+            echo "run_pages=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run_pages=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
@@ -69,6 +127,13 @@ jobs:
           git fetch --tags --force
           node scripts/bump-version.mjs
 
+      - name: Build portable & native web bundle (relative paths)
+        env:
+          VITE_GITHUB_REPO: ${{ github.repository }}
+          VITE_BASE_PATH: "./"
+          VITE_DISABLE_PWA: "true"
+        run: npm run build
+
       - name: Commit bumped version & tag
         run: |
           git config user.name "github-actions[bot]"
@@ -78,156 +143,36 @@ jobs:
           git tag -a "v${{ steps.bump.outputs.version }}" -m "Release v${{ steps.bump.outputs.version }}"
           git push origin HEAD:main --follow-tags
 
-      - name: Build portable & native web bundle (relative paths)
-        env:
-          VITE_GITHUB_REPO: ${{ github.repository }}
-          VITE_BASE_PATH: "./"
-          VITE_DISABLE_PWA: "true"
-        run: npm run build
-
-      - name: Upload native web bundle for Desktop, Android & iOS jobs
+      - name: Upload native web bundle for app jobs
         uses: actions/upload-artifact@v4
         with:
           name: web-dist-native
           path: dist/
           retention-days: 1
 
-      - name: Package downloadable Web bundles
+      - name: Package optional Web bundles
+        if: steps.flags.outputs.run_web_bundles == 'true'
         shell: bash
         env:
           VERSION: ${{ steps.bump.outputs.version }}
-          REPO: ${{ github.repository }}
         run: |
           mkdir -p release-artifacts
-
-          # 1. Cross-platform portable ZIP bundle
           (cd dist && zip -r "../release-artifacts/tamagotchi-v${VERSION}-web.zip" .)
-
-          # 2. Cross-platform compressed TAR.GZ bundle
           tar -czf "release-artifacts/tamagotchi-v${VERSION}-web.tar.gz" -C dist .
-
-          # 3. SHA-256 verification checksums
           (cd release-artifacts && sha256sum "tamagotchi-v${VERSION}-web.zip" "tamagotchi-v${VERSION}-web.tar.gz" > "tamagotchi-v${VERSION}-checksums.sha256")
 
-          # 4. Machine-readable updater manifest (latest.json)
-          node -e '
-            const fs = require("node:fs");
-            const v = process.env.VERSION;
-            const repo = process.env.REPO;
-            const base = `https://github.com/${repo}/releases/download/v${v}`;
-            const manifest = {
-              version: v,
-              tag: `v${v}`,
-              publishedAt: new Date().toISOString(),
-              repository: repo,
-              releaseUrl: `https://github.com/${repo}/releases/tag/v${v}`,
-              assets: {
-                windowsSetup: `${base}/Tamagotchi-v${v}-Windows-Setup.exe`,
-                windowsPortable: `${base}/Tamagotchi-v${v}-Windows-Portable.exe`,
-                macDmg: `${base}/Tamagotchi-v${v}-macOS.dmg`,
-                linuxAppImage: `${base}/Tamagotchi-v${v}-Linux.AppImage`,
-                androidApk: `${base}/Tamagotchi-v${v}-Android.apk`,
-                iosIpa: `${base}/Tamagotchi-v${v}-iOS-unsigned.ipa`,
-                webZip: `${base}/tamagotchi-v${v}-web.zip`,
-                webTarGz: `${base}/tamagotchi-v${v}-web.tar.gz`,
-                checksums: `${base}/tamagotchi-v${v}-checksums.sha256`,
-              },
-            };
-            fs.writeFileSync("release-artifacts/latest.json", JSON.stringify(manifest, null, 2) + "\n");
-          '
-
-      - name: Create Draft GitHub Release with Web artifacts
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          TAG="${{ steps.bump.outputs.tag }}"
-          gh release create "$TAG" \
-            release-artifacts/* \
-            --title "Tamagotchi $TAG" \
-            --generate-notes \
-            --draft
-
-  build-desktop:
-    name: Build Desktop (${{ matrix.label }})
-    needs: release
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - label: Windows .exe
-            os: windows-latest
-            args: --win nsis portable
-            ext: exe
-          - label: macOS .dmg
-            os: macos-latest
-            args: --mac dmg
-            ext: dmg
-          - label: Linux .AppImage
-            os: ubuntu-latest
-            args: --linux AppImage
-            ext: AppImage
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - name: Upload optional Web release assets
+        if: steps.flags.outputs.run_web_bundles == 'true'
+        uses: actions/upload-artifact@v4
         with:
-          ref: ${{ needs.release.outputs.tag }}
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-
-      - name: Download compiled web bundle
-        uses: actions/download-artifact@v4
-        with:
-          name: web-dist-native
-          path: desktop/web
-
-      - name: Sync version and app icon
-        shell: bash
-        env:
-          VERSION: ${{ needs.release.outputs.version }}
-        run: |
-          cp public/pwa-512x512.png desktop/icon.png
-          node -e '
-            const fs = require("node:fs");
-            const p = "desktop/package.json";
-            const pkg = JSON.parse(fs.readFileSync(p, "utf8"));
-            pkg.version = process.env.VERSION;
-            fs.writeFileSync(p, JSON.stringify(pkg, null, 2) + "\n");
-          '
-
-      - name: Install desktop packager dependencies
-        working-directory: desktop
-        run: npm install --no-package-lock --no-audit --no-fund
-
-      - name: Build native installer (${{ matrix.label }})
-        working-directory: desktop
-        env:
-          CSC_IDENTITY_AUTO_DISCOVERY: "false"
-        run: npx electron-builder ${{ matrix.args }}
-
-      - name: Upload installer to GitHub Release
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ needs.release.outputs.tag }}
-          EXT: ${{ matrix.ext }}
-        run: |
-          shopt -s nullglob
-          FILES=(desktop/release-out/*.${EXT})
-          if [ ${#FILES[@]} -eq 0 ]; then
-            echo "No *.${EXT} files found in desktop/release-out/"
-            ls -la desktop/release-out/ || true
-            exit 1
-          fi
-          gh release upload "$TAG" "${FILES[@]}" --clobber
+          name: release-asset-web
+          path: release-artifacts/*
+          retention-days: 1
 
   build-android:
     name: Build Android .apk
     needs: release
+    if: needs.release.outputs.run_android == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -277,10 +222,8 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleRelease
 
-      - name: Verify APK signature & upload to GitHub Release
+      - name: Verify APK signature & stage release asset
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ needs.release.outputs.tag }}
           VERSION: ${{ needs.release.outputs.version }}
         run: |
           APK_SRC="mobile/android/app/build/outputs/apk/release/app-release.apk"
@@ -293,12 +236,106 @@ jobs:
           if [ -n "$APKSIGNER" ]; then
             "$APKSIGNER" verify --print-certs "$APK_SRC"
           fi
-          cp "$APK_SRC" "Tamagotchi-v${VERSION}-Android.apk"
-          gh release upload "$TAG" "Tamagotchi-v${VERSION}-Android.apk" --clobber
+          mkdir -p staged-android
+          cp "$APK_SRC" "staged-android/Tamagotchi-v${VERSION}-Android.apk"
+
+      - name: Upload Android APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-asset-android
+          path: staged-android/*.apk
+          retention-days: 1
+
+  build-desktop:
+    name: Build Desktop (${{ matrix.label }})
+    needs: release
+    if: needs.release.outputs.run_desktop == 'true'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Windows .exe
+            id: windows
+            os: windows-latest
+            args: --win nsis portable
+            ext: exe
+          - label: macOS .dmg
+            id: macos
+            os: macos-latest
+            args: --mac dmg
+            ext: dmg
+          - label: Linux .AppImage
+            id: linux
+            os: ubuntu-latest
+            args: --linux AppImage
+            ext: AppImage
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release.outputs.tag }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Download compiled web bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: web-dist-native
+          path: desktop/web
+
+      - name: Sync version and app icon
+        shell: bash
+        env:
+          VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          cp public/pwa-512x512.png desktop/icon.png
+          node -e '
+            const fs = require("node:fs");
+            const p = "desktop/package.json";
+            const pkg = JSON.parse(fs.readFileSync(p, "utf8"));
+            pkg.version = process.env.VERSION;
+            fs.writeFileSync(p, JSON.stringify(pkg, null, 2) + "\n");
+          '
+
+      - name: Install desktop packager dependencies
+        working-directory: desktop
+        run: npm install --no-package-lock --no-audit --no-fund
+
+      - name: Build native installer (${{ matrix.label }})
+        working-directory: desktop
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: npx electron-builder ${{ matrix.args }}
+
+      - name: Verify desktop output
+        shell: bash
+        env:
+          EXT: ${{ matrix.ext }}
+        run: |
+          shopt -s nullglob
+          FILES=(desktop/release-out/*.${EXT})
+          if [ ${#FILES[@]} -eq 0 ]; then
+            echo "No *.${EXT} files found in desktop/release-out/"
+            ls -la desktop/release-out/ || true
+            exit 1
+          fi
+
+      - name: Upload desktop artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-asset-desktop-${{ matrix.id }}
+          path: desktop/release-out/*.${{ matrix.ext }}
+          retention-days: 1
 
   build-ios:
     name: Build iOS .ipa (Unsigned)
     needs: release
+    if: needs.release.outputs.run_ios == 'true'
     runs-on: macos-latest
 
     steps:
@@ -363,35 +400,54 @@ jobs:
             exit 1
           fi
 
-          mkdir -p ipa-staging/Payload
+          mkdir -p ipa-staging/Payload "$GITHUB_WORKSPACE/staged-ios"
           cp -R "$APP_PATH" ipa-staging/Payload/
-          (cd ipa-staging && zip -r "$GITHUB_WORKSPACE/Tamagotchi-v${VERSION}-iOS-unsigned.ipa" Payload)
+          (cd ipa-staging && zip -r "$GITHUB_WORKSPACE/staged-ios/Tamagotchi-v${VERSION}-iOS-unsigned.ipa" Payload)
 
-      - name: Upload iOS IPA to GitHub Release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ needs.release.outputs.tag }}
-          VERSION: ${{ needs.release.outputs.version }}
-        run: |
-          gh release upload "$TAG" "$GITHUB_WORKSPACE/Tamagotchi-v${VERSION}-iOS-unsigned.ipa" --clobber
+      - name: Upload iOS IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-asset-ios
+          path: staged-ios/*.ipa
+          retention-days: 1
 
   publish-release:
-    name: Publish Complete Release
-    needs: [release, build-desktop, build-android, build-ios]
-    if: always() && needs.release.result == 'success'
+    name: Publish GitHub Release
+    needs: [release, build-android, build-desktop, build-ios]
+    if: always() && needs.release.result == 'success' && (needs.build-android.result == 'success' || needs.build-desktop.result == 'success' || needs.build-ios.result == 'success')
     runs-on: ubuntu-latest
     steps:
-      - name: Publish GitHub Release as Latest
+      - name: Download all built release assets
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-asset-*
+          merge-multiple: true
+          path: final-release
+
+      - name: Create & publish complete GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.release.outputs.tag }}
           REPO: ${{ github.repository }}
         run: |
-          gh release edit "$TAG" --repo "$REPO" --draft=false --latest
+          ls -la final-release/
+          shopt -s nullglob
+          FILES=(final-release/*)
+          if [ ${#FILES[@]} -eq 0 ]; then
+            echo "No built release assets found to publish"
+            exit 1
+          fi
+          gh release create "$TAG" \
+            "${FILES[@]}" \
+            --repo "$REPO" \
+            --title "Tamagotchi $TAG" \
+            --generate-notes \
+            --latest
 
   deploy-pages:
     name: Deploy Live PWA (GitHub Pages)
     needs: release
+    if: needs.release.outputs.run_pages == 'true'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
