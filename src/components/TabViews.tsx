@@ -6,6 +6,7 @@ import type {
 } from '../hooks/useAppUpdater';
 import type { TabId } from '../types/navigation';
 import { AppUpdaterPanel } from './AppUpdaterPanel';
+import { GlassSettingsPanel } from './GlassSettingsPanel';
 import { LiquidGlassSurface } from './LiquidGlassSurface';
 
 export interface UpdaterViewProps {
@@ -67,8 +68,8 @@ const COMMUNITY_SPACES = [
 
 const SETTINGS_ROWS = [
   {
-    label: 'Appearance',
-    detail: 'iOS Liquid Glass · Scenic Forest Backdrop',
+    label: 'Navigation Gesture',
+    detail: 'Tap or drag the Liquid Glass dock pill to switch tabs',
   },
   {
     label: 'Multi-Platform Layout',
@@ -95,13 +96,13 @@ export function TabViews({ activeTab, updater }: TabViewsProps) {
           blurAmount={0.14}
           contentClassName="px-6 py-7 sm:px-9 sm:py-10"
         >
-          <p className="text-xs font-medium text-white/80 drop-shadow-[0_1px_4px_rgba(0,0,0,0.4)]">
+          <p className="text-xs font-medium text-white/88 drop-shadow-[0_1px_3px_rgba(0,0,0,0.5)]">
             Home <span aria-hidden="true">·</span> Sanctuary
           </p>
-          <h1 className="mt-2.5 max-w-2xl text-balance font-display text-[clamp(2rem,4.5vw,3.25rem)] font-semibold leading-[1.1] tracking-[-0.025em] text-white drop-shadow-[0_2px_14px_rgba(0,0,0,0.35)]">
+          <h1 className="mt-2.5 max-w-2xl text-balance font-display text-[clamp(2rem,4.5vw,3.25rem)] font-semibold leading-[1.1] tracking-[-0.025em] text-white drop-shadow-[0_2px_10px_rgba(0,0,0,0.45)]">
             Welcome to Tamagotchi
           </h1>
-          <p className="mt-3 max-w-xl text-[15px] leading-relaxed text-white/88 sm:text-base drop-shadow-[0_1px_6px_rgba(0,0,0,0.35)]">
+          <p className="mt-3 max-w-xl text-[15px] leading-relaxed text-white/94 sm:text-base drop-shadow-[0_1px_4px_rgba(0,0,0,0.45)]">
             A serene, multi-platform study and professional companion workspace
             shaped with optical Liquid Glass surfaces.
           </p>
@@ -118,13 +119,13 @@ export function TabViews({ activeTab, updater }: TabViewsProps) {
               contentClassName="flex h-full flex-col justify-between p-5 sm:p-6"
             >
               <div>
-                <p className="text-xs font-medium text-white/75 drop-shadow-[0_1px_3px_rgba(0,0,0,0.4)]">
+                <p className="text-xs font-medium text-white/85 drop-shadow-[0_1px_3px_rgba(0,0,0,0.5)]">
                   {pillar.caption}
                 </p>
-                <h2 className="mt-1.5 font-display text-lg font-semibold tracking-[-0.015em] text-white drop-shadow-[0_1px_6px_rgba(0,0,0,0.35)]">
+                <h2 className="mt-1.5 font-display text-lg font-semibold tracking-[-0.015em] text-white drop-shadow-[0_1px_6px_rgba(0,0,0,0.45)]">
                   {pillar.title}
                 </h2>
-                <p className="mt-2 text-sm leading-relaxed text-white/85 drop-shadow-[0_1px_4px_rgba(0,0,0,0.35)]">
+                <p className="mt-2 text-sm leading-relaxed text-white/92 drop-shadow-[0_1px_3px_rgba(0,0,0,0.45)]">
                   {pillar.description}
                 </p>
               </div>
@@ -149,13 +150,13 @@ export function TabViews({ activeTab, updater }: TabViewsProps) {
           blurAmount={0.14}
           contentClassName="px-6 py-7 sm:px-9 sm:py-10"
         >
-          <p className="text-xs font-medium text-white/80 drop-shadow-[0_1px_4px_rgba(0,0,0,0.4)]">
+          <p className="text-xs font-medium text-white/88 drop-shadow-[0_1px_3px_rgba(0,0,0,0.5)]">
             Community <span aria-hidden="true">·</span> Shared Spaces
           </p>
-          <h1 className="mt-2.5 max-w-2xl text-balance font-display text-[clamp(2rem,4.5vw,3.1rem)] font-semibold leading-[1.1] tracking-[-0.025em] text-white drop-shadow-[0_2px_14px_rgba(0,0,0,0.35)]">
+          <h1 className="mt-2.5 max-w-2xl text-balance font-display text-[clamp(2rem,4.5vw,3.1rem)] font-semibold leading-[1.1] tracking-[-0.025em] text-white drop-shadow-[0_2px_10px_rgba(0,0,0,0.45)]">
             Study together in calm company
           </h1>
-          <p className="mt-3 max-w-xl text-[15px] leading-relaxed text-white/88 sm:text-base drop-shadow-[0_1px_6px_rgba(0,0,0,0.35)]">
+          <p className="mt-3 max-w-xl text-[15px] leading-relaxed text-white/94 sm:text-base drop-shadow-[0_1px_4px_rgba(0,0,0,0.45)]">
             Sample layout for quiet focus halls, peer study groups, and shared
             reference libraries.
           </p>
@@ -172,13 +173,13 @@ export function TabViews({ activeTab, updater }: TabViewsProps) {
               contentClassName="flex h-full flex-col justify-between p-5 sm:p-7"
             >
               <div>
-                <p className="text-xs font-medium text-white/75 drop-shadow-[0_1px_3px_rgba(0,0,0,0.4)]">
+                <p className="text-xs font-medium text-white/85 drop-shadow-[0_1px_3px_rgba(0,0,0,0.5)]">
                   {space.caption}
                 </p>
-                <h2 className="mt-1.5 font-display text-xl font-semibold tracking-[-0.015em] text-white drop-shadow-[0_1px_6px_rgba(0,0,0,0.35)]">
+                <h2 className="mt-1.5 font-display text-xl font-semibold tracking-[-0.015em] text-white drop-shadow-[0_1px_6px_rgba(0,0,0,0.45)]">
                   {space.title}
                 </h2>
-                <p className="mt-2.5 text-sm leading-relaxed text-white/85 sm:text-[15px] drop-shadow-[0_1px_4px_rgba(0,0,0,0.35)]">
+                <p className="mt-2.5 text-sm leading-relaxed text-white/92 sm:text-[15px] drop-shadow-[0_1px_3px_rgba(0,0,0,0.45)]">
                   {space.description}
                 </p>
               </div>
@@ -202,17 +203,19 @@ export function TabViews({ activeTab, updater }: TabViewsProps) {
         blurAmount={0.14}
         contentClassName="px-6 py-7 sm:px-9 sm:py-10"
       >
-        <p className="text-xs font-medium text-white/80 drop-shadow-[0_1px_4px_rgba(0,0,0,0.4)]">
-          Settings <span aria-hidden="true">·</span> Preferences & Updates
+        <p className="text-xs font-medium text-white/88 drop-shadow-[0_1px_3px_rgba(0,0,0,0.5)]">
+          Settings <span aria-hidden="true">·</span> Preferences &amp; Updates
         </p>
-        <h1 className="mt-2.5 max-w-2xl text-balance font-display text-[clamp(2rem,4.5vw,3.1rem)] font-semibold leading-[1.1] tracking-[-0.025em] text-white drop-shadow-[0_2px_14px_rgba(0,0,0,0.35)]">
+        <h1 className="mt-2.5 max-w-2xl text-balance font-display text-[clamp(2rem,4.5vw,3.1rem)] font-semibold leading-[1.1] tracking-[-0.025em] text-white drop-shadow-[0_2px_10px_rgba(0,0,0,0.45)]">
           Workspace settings
         </h1>
-        <p className="mt-3 max-w-xl text-[15px] leading-relaxed text-white/88 sm:text-base drop-shadow-[0_1px_6px_rgba(0,0,0,0.35)]">
-          Manage in-app updates, GitHub release downloads, device installation,
-          and workspace preferences.
+        <p className="mt-3 max-w-xl text-[15px] leading-relaxed text-white/94 sm:text-base drop-shadow-[0_1px_4px_rgba(0,0,0,0.45)]">
+          Customize Liquid Glass optics, manage in-app updates, and download
+          multi-platform releases.
         </p>
       </LiquidGlassSurface>
+
+      <GlassSettingsPanel />
 
       <AppUpdaterPanel {...updater} />
 
@@ -227,10 +230,10 @@ export function TabViews({ activeTab, updater }: TabViewsProps) {
             key={row.label}
             className="flex flex-col gap-1 py-4 sm:flex-row sm:items-center sm:justify-between sm:gap-6 sm:py-5"
           >
-            <span className="font-display text-[15px] font-semibold text-white drop-shadow-[0_1px_4px_rgba(0,0,0,0.35)]">
+            <span className="font-display text-[15px] font-semibold text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.45)]">
               {row.label}
             </span>
-            <span className="text-sm text-white/80 drop-shadow-[0_1px_4px_rgba(0,0,0,0.35)]">
+            <span className="text-sm text-white/88 drop-shadow-[0_1px_3px_rgba(0,0,0,0.45)]">
               {row.detail}
             </span>
           </div>

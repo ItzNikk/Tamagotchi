@@ -50,7 +50,7 @@ export function UpdateBanner({
                   <p className="truncate font-display text-sm font-semibold text-white">
                     Update ready
                     {latestRelease ? (
-                      <span className="ml-1.5 font-normal tabular-nums text-white/80">
+                      <span className="ml-1.5 font-normal tabular-nums text-white/90">
                         · v{latestRelease.version}
                       </span>
                     ) : null}
@@ -58,7 +58,7 @@ export function UpdateBanner({
                   <button
                     type="button"
                     onClick={onOpenSettings}
-                    className="cursor-pointer text-xs text-white/75 underline-offset-2 transition-colors hover:text-white hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80"
+                    className="cursor-pointer text-xs text-white/88 underline-offset-2 transition-colors hover:text-white hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80"
                   >
                     View release details
                   </button>
@@ -70,7 +70,7 @@ export function UpdateBanner({
                   type="button"
                   disabled={isUpdating}
                   onClick={onUpdateNow}
-                  className="ios-glass-active-lens min-h-[40px] cursor-pointer whitespace-nowrap rounded-full px-4 py-2 text-xs font-semibold text-white transition-transform duration-150 hover:brightness-110 active:scale-[0.97] disabled:cursor-wait disabled:opacity-70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/85"
+                  className="ios-glass-button ios-glass-active-lens min-h-[40px] cursor-pointer whitespace-nowrap rounded-full px-4 py-2 text-xs font-semibold text-white disabled:cursor-wait disabled:opacity-70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/85"
                 >
                   {isUpdating ? 'Updating…' : 'Update Now'}
                 </button>
@@ -78,7 +78,7 @@ export function UpdateBanner({
                   type="button"
                   aria-label="Dismiss update notification"
                   onClick={onDismiss}
-                  className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-full text-white/75 transition-colors hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/85"
+                  className="ios-glass-button flex h-10 w-10 cursor-pointer items-center justify-center rounded-full text-white/85 hover:bg-white/15 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/85"
                 >
                   <X aria-hidden="true" className="h-4 w-4" />
                 </button>
