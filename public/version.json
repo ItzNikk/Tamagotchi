@@ -1,8 +1,8 @@
 {
-  "version": "0.2.0",
-  "releasedAt": "2026-11-20T10:48:00.818Z",
-  "commitSha": "906a54f",
+  "version": "0.3.0",
+  "releasedAt": "2026-11-20T11:15:52.867Z",
+  "commitSha": "9e22d9d",
   "repository": "ItzNikk/Tamagotchi",
-  "releaseUrl": "https://github.com/ItzNikk/Tamagotchi/releases/tag/v0.2.0",
-  "notes": "feat: enable multi-platform support"
+  "releaseUrl": "https://github.com/ItzNikk/Tamagotchi/releases/tag/v0.3.0",
+  "notes": "feat(ui): implement interactive liquid glass navigation"
 }
