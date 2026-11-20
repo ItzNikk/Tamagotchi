@@ -1,8 +1,8 @@
 {
-  "version": "0.3.0",
-  "releasedAt": "2026-11-20T11:15:52.867Z",
-  "commitSha": "9e22d9d",
+  "version": "0.4.0",
+  "releasedAt": "2026-11-20T11:51:25.518Z",
+  "commitSha": "47c923e",
   "repository": "ItzNikk/Tamagotchi",
-  "releaseUrl": "https://github.com/ItzNikk/Tamagotchi/releases/tag/v0.3.0",
-  "notes": "feat(ui): implement interactive liquid glass navigation"
+  "releaseUrl": "https://github.com/ItzNikk/Tamagotchi/releases/tag/v0.4.0",
+  "notes": "feat(mobile): add in-app APK update support"
 }
