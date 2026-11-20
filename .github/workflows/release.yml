@@ -1,0 +1,139 @@
+name: Auto Release & Build Download Files
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - "**.md"
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Version bump level (auto, patch, minor, major)"
+        required: false
+        default: "auto"
+        type: choice
+        options:
+          - auto
+          - patch
+          - minor
+          - major
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: release-pipeline
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Version, Build & Publish GitHub Release
+    runs-on: ubuntu-latest
+    # Prevent infinite loops from automated version bump commits
+    if: "!contains(github.event.head_commit.message, '[skip ci]') && github.actor != 'github-actions[bot]'"
+    outputs:
+      version: ${{ steps.bump.outputs.version }}
+      tag: ${{ steps.bump.outputs.tag }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint and type-check
+        run: npm run lint
+
+      - name: Auto-bump version and update version.json
+        id: bump
+        env:
+          BUMP_TYPE: ${{ inputs.bump || 'auto' }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: node scripts/bump-version.mjs
+
+      - name: Commit bumped version & tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json public/version.json
+          git commit -m "chore(release): v${{ steps.bump.outputs.version }} [skip ci]"
+          git tag -a "v${{ steps.bump.outputs.version }}" -m "Release v${{ steps.bump.outputs.version }}"
+          git push origin HEAD:main --follow-tags
+
+      - name: Build production Web & PWA bundle
+        env:
+          VITE_GITHUB_REPO: ${{ github.repository }}
+        run: npm run build
+
+      - name: Package downloadable release files
+        shell: bash
+        run: |
+          VERSION="${{ steps.bump.outputs.version }}"
+          mkdir -p release-artifacts
+
+          # 1. Cross-platform portable ZIP bundle
+          (cd dist && zip -r "../release-artifacts/tamagotchi-v${VERSION}-web.zip" .)
+
+          # 2. Cross-platform compressed TAR.GZ bundle
+          tar -czf "release-artifacts/tamagotchi-v${VERSION}-web.tar.gz" -C dist .
+
+          # 3. SHA-256 verification checksums
+          (cd release-artifacts && sha256sum tamagotchi-v${VERSION}-web.zip tamagotchi-v${VERSION}-web.tar.gz > "tamagotchi-v${VERSION}-checksums.sha256")
+
+          # 4. Machine-readable updater manifest (latest.json)
+          cat <<EOF > release-artifacts/latest.json
+          {
+            "version": "${VERSION}",
+            "tag": "v${VERSION}",
+            "publishedAt": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
+            "repository": "${{ github.repository }}",
+            "releaseUrl": "https://github.com/${{ github.repository }}/releases/tag/v${VERSION}",
+            "assets": {
+              "webZip": "https://github.com/${{ github.repository }}/releases/download/v${VERSION}/tamagotchi-v${VERSION}-web.zip",
+              "webTarGz": "https://github.com/${{ github.repository }}/releases/download/v${VERSION}/tamagotchi-v${VERSION}-web.tar.gz",
+              "checksums": "https://github.com/${{ github.repository }}/releases/download/v${VERSION}/tamagotchi-v${VERSION}-checksums.sha256"
+            }
+          }
+          EOF
+
+      - name: Create GitHub Release with downloadable assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.bump.outputs.tag }}"
+          gh release create "$TAG" \
+            release-artifacts/* \
+            --title "Tamagotchi $TAG" \
+            --generate-notes \
+            --latest
+
+      - name: Upload GitHub Pages artifact for live OTA PWA updates
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./dist
+
+  deploy-pages:
+    name: Deploy Live PWA (GitHub Pages)
+    needs: release
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

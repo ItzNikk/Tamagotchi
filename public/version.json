@@ -1,0 +1,8 @@
+{
+  "version": "0.1.0",
+  "releasedAt": "2026-11-20T00:00:00.000Z",
+  "commitSha": "",
+  "repository": "",
+  "releaseUrl": "",
+  "notes": "Initial Tamagotchi release with iOS Liquid Glass UI, three-way navigation, and in-app updater."
+}
