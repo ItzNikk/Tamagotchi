@@ -48,6 +48,7 @@ export function LiquidGlassSurface({
   const { settings } = useLiquidGlass();
   const prefersReducedMotion = useReducedMotion();
   const hostRef = useRef<HTMLDivElement>(null);
+  const prevSizeRef = useRef({ width: 0, height: 0 });
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [isPointerInside, setIsPointerInside] = useState(false);
   const [isPressed, setIsPressed] = useState(false);
@@ -74,16 +75,14 @@ export function LiquidGlassSurface({
       const nextWidth = Math.round(rect.width);
       const nextHeight = Math.round(rect.height);
 
-      let changedAfterMount = false;
-      setSize((prev) => {
-        if (prev.width === nextWidth && prev.height === nextHeight) {
-          return prev;
-        }
-        if (prev.width > 0 && prev.height > 0) {
-          changedAfterMount = true;
-        }
-        return { width: nextWidth, height: nextHeight };
-      });
+      const prev = prevSizeRef.current;
+      if (prev.width === nextWidth && prev.height === nextHeight) {
+        return;
+      }
+
+      const changedAfterMount = prev.width > 0 && prev.height > 0;
+      prevSizeRef.current = { width: nextWidth, height: nextHeight };
+      setSize({ width: nextWidth, height: nextHeight });
 
       if (changedAfterMount) {
         window.clearTimeout(resizeTimer);

@@ -8,6 +8,7 @@ function createWindow() {
     minWidth: 380,
     minHeight: 620,
     title: 'Tamagotchi',
+    icon: path.join(__dirname, 'web', 'pwa-512x512.png'),
     backgroundColor: '#1b2217',
     autoHideMenuBar: true,
     webPreferences: {

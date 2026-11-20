@@ -44,14 +44,20 @@ fs.copyFileSync(
   path.join(javaPkgDir, 'MainActivity.java'),
 );
 
-// 2. Ensure REQUEST_INSTALL_PACKAGES permission is declared in AndroidManifest.xml
+// 2. Ensure REQUEST_INSTALL_PACKAGES permission and FileProvider exist in AndroidManifest.xml
 let manifest = fs.readFileSync(manifestPath, 'utf8');
 if (!manifest.includes('android.permission.REQUEST_INSTALL_PACKAGES')) {
+  if (!manifest.includes('</manifest>')) {
+    throw new Error('Invalid AndroidManifest.xml: missing </manifest>');
+  }
   manifest = manifest.replace(
     '</manifest>',
     '    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />\n</manifest>',
   );
   fs.writeFileSync(manifestPath, manifest, 'utf8');
+}
+if (!manifest.includes('androidx.core.content.FileProvider')) {
+  throw new Error('Expected Capacitor FileProvider declaration in AndroidManifest.xml');
 }
 
 // 3. Expose cache/updates/ through Capacitor's existing FileProvider paths
@@ -85,9 +91,10 @@ const fallbackKeystore = path.resolve(
   'android-signing',
   'tamagotchi-open.p12',
 );
-const keystoreFile = customKeystore && fs.existsSync(customKeystore)
-  ? path.resolve(customKeystore)
-  : fallbackKeystore;
+const keystoreFile =
+  customKeystore && fs.existsSync(customKeystore)
+    ? path.resolve(customKeystore)
+    : fallbackKeystore;
 
 if (!fs.existsSync(keystoreFile)) {
   throw new Error(`Android signing keystore not found at ${keystoreFile}`);
@@ -103,13 +110,16 @@ const targetKeystoreName = isPkcs12 ? 'release-signing.p12' : 'release-signing.j
 fs.copyFileSync(keystoreFile, path.join(appDir, targetKeystoreName));
 
 let gradle = fs.readFileSync(buildGradlePath, 'utf8');
+if (!/versionCode\s+\d+/.test(gradle) || !/versionName\s+"[^"]+"/.test(gradle)) {
+  throw new Error('Could not locate versionCode/versionName in android/app/build.gradle');
+}
 gradle = gradle.replace(/versionCode\s+\d+/, `versionCode ${versionCode}`);
 gradle = gradle.replace(/versionName\s+"[^"]+"/, `versionName "${version}"`);
 
+const storeTypeLine = isPkcs12 ? '\n            storeType "PKCS12"' : '';
 const signingBlock = `    signingConfigs {
         release {
-            storeFile file("${targetKeystoreName}")
-            ${isPkcs12 ? 'storeType "PKCS12"' : ''}
+            storeFile file("${targetKeystoreName}")${storeTypeLine}
             storePassword "${storePassword.replace(/"/g, '\\"')}"
             keyAlias "${keyAlias.replace(/"/g, '\\"')}"
             keyPassword "${keyPassword.replace(/"/g, '\\"')}"

@@ -6,9 +6,48 @@ const root = process.cwd();
 const pkgPath = path.join(root, 'package.json');
 const versionJsonPath = path.join(root, 'public', 'version.json');
 
+function parseSemver(raw) {
+  return String(raw || '0.0.0')
+    .trim()
+    .replace(/^v/i, '')
+    .split('-')[0]
+    .split('.')
+    .slice(0, 3)
+    .map((n) => Number.parseInt(n, 10) || 0);
+}
+
+function compareSemver(a, b) {
+  const pa = parseSemver(a);
+  const pb = parseSemver(b);
+  for (let i = 0; i < 3; i += 1) {
+    const diff = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
+
+function getHighestGitTagVersion() {
+  try {
+    const output = execSync('git tag --list "v*"', { encoding: 'utf8' });
+    let highest = '0.0.0';
+    for (const line of output.split(/\r?\n/)) {
+      const cleaned = line.trim().replace(/^v/i, '');
+      if (/^\d+\.\d+\.\d+$/.test(cleaned) && compareSemver(cleaned, highest) > 0) {
+        highest = cleaned;
+      }
+    }
+    return highest;
+  } catch {
+    return '0.0.0';
+  }
+}
+
 const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
-const currentVersion = pkg.version || '0.1.0';
-const [major, minor, patch] = currentVersion.split('.').map((n) => Number.parseInt(n, 10) || 0);
+const pkgVersion = pkg.version || '0.1.0';
+const highestTagVersion = getHighestGitTagVersion();
+const currentVersion =
+  compareSemver(highestTagVersion, pkgVersion) > 0 ? highestTagVersion : pkgVersion;
+const [major, minor, patch] = parseSemver(currentVersion);
 
 function getLastCommitMessage() {
   try {

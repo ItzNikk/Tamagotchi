@@ -1,7 +1,12 @@
 package com.itznikk.tamagotchi;
 
 import android.app.Activity;
+import android.content.ClipData;
 import android.content.Intent;
+import android.content.pm.PackageInfo;
+import android.content.pm.PackageManager;
+import android.content.pm.Signature;
+import android.content.pm.SigningInfo;
 import android.net.Uri;
 import android.os.Build;
 import android.provider.Settings;
@@ -20,16 +25,23 @@ import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
-import java.util.concurrent.ExecutorService;
+import java.util.Arrays;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 @CapacitorPlugin(name = "ApkUpdater")
 public class ApkUpdaterPlugin extends Plugin {
     private static final String UPDATES_DIR_NAME = "updates";
     private static final int MAX_REDIRECTS = 8;
+    private static final long POST_INSTALL_CLEANUP_DELAY_MS = 4000L;
 
-    private final ExecutorService executor = Executors.newSingleThreadExecutor();
+    private final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();
+    private final AtomicBoolean updateInProgress = new AtomicBoolean(false);
     private volatile File pendingApkFile = null;
+    private volatile ScheduledFuture<?> pendingCleanupTask = null;
 
     @Override
     public void load() {
@@ -39,8 +51,17 @@ public class ApkUpdaterPlugin extends Plugin {
 
     @Override
     protected void handleOnDestroy() {
+        cancelScheduledCleanup();
         executor.shutdownNow();
         super.handleOnDestroy();
+    }
+
+    private void cancelScheduledCleanup() {
+        ScheduledFuture<?> task = pendingCleanupTask;
+        if (task != null) {
+            task.cancel(false);
+            pendingCleanupTask = null;
+        }
     }
 
     private File getUpdatesDir() {
@@ -55,6 +76,7 @@ public class ApkUpdaterPlugin extends Plugin {
         int deleted = 0;
         File dir = new File(getContext().getCacheDir(), UPDATES_DIR_NAME);
         if (!dir.exists() || !dir.isDirectory()) {
+            pendingApkFile = null;
             return 0;
         }
         File[] files = dir.listFiles();
@@ -108,6 +130,87 @@ public class ApkUpdaterPlugin extends Plugin {
         }
     }
 
+    @SuppressWarnings("deprecation")
+    private long getLongVersionCodeCompat(PackageInfo info) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            return info.getLongVersionCode();
+        }
+        return info.versionCode;
+    }
+
+    @SuppressWarnings("deprecation")
+    private Signature[] extractSignatures(PackageInfo info) {
+        if (info == null) return null;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            SigningInfo signingInfo = info.signingInfo;
+            if (signingInfo != null) {
+                return signingInfo.hasMultipleSigners()
+                        ? signingInfo.getApkContentsSigners()
+                        : signingInfo.getSigningCertificateHistory();
+            }
+        }
+        return info.signatures;
+    }
+
+    @SuppressWarnings("deprecation")
+    private String validateDownloadedApk(File apkFile) {
+        if (!isValidApkArchive(apkFile)) {
+            return "Downloaded file is not a valid Android APK package.";
+        }
+
+        PackageManager pm = getContext().getPackageManager();
+        int flags = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
+                ? PackageManager.GET_SIGNING_CERTIFICATES
+                : PackageManager.GET_SIGNATURES;
+
+        PackageInfo archiveInfo = pm.getPackageArchiveInfo(apkFile.getAbsolutePath(), flags);
+        if (archiveInfo == null) {
+            // Fallback without signature flag in case OEM parser rejects signature query on archive
+            archiveInfo = pm.getPackageArchiveInfo(apkFile.getAbsolutePath(), 0);
+        }
+        if (archiveInfo == null) {
+            return "Downloaded APK could not be parsed. Please retry the update.";
+        }
+
+        String myPkg = getContext().getPackageName();
+        if (!myPkg.equals(archiveInfo.packageName)) {
+            return "Downloaded APK package (" + archiveInfo.packageName + ") does not match this app.";
+        }
+
+        try {
+            PackageInfo installedInfo = pm.getPackageInfo(myPkg, flags);
+            long installedCode = getLongVersionCodeCompat(installedInfo);
+            long archiveCode = getLongVersionCodeCompat(archiveInfo);
+
+            if (archiveCode > 0 && installedCode > 0 && archiveCode < installedCode) {
+                return "Downloaded APK is an older build than the currently installed version.";
+            }
+
+            Signature[] installedSigs = extractSignatures(installedInfo);
+            Signature[] archiveSigs = extractSignatures(archiveInfo);
+            if (installedSigs != null && installedSigs.length > 0
+                    && archiveSigs != null && archiveSigs.length > 0) {
+                boolean matches = false;
+                for (Signature a : archiveSigs) {
+                    for (Signature b : installedSigs) {
+                        if (a != null && b != null && Arrays.equals(a.toByteArray(), b.toByteArray())) {
+                            matches = true;
+                            break;
+                        }
+                    }
+                    if (matches) break;
+                }
+                if (!matches) {
+                    return "This update uses the consistent release signing key. Uninstall your older debug build once, then install the new release APK.";
+                }
+            }
+        } catch (Exception ignored) {
+            // Proceed to Android installer if PackageManager metadata lookup fails on a specific OEM
+        }
+
+        return null;
+    }
+
     private HttpURLConnection openFollowingRedirects(String urlString) throws Exception {
         String currentUrl = urlString;
         for (int hops = 0; hops < MAX_REDIRECTS; hops++) {
@@ -145,6 +248,7 @@ public class ApkUpdaterPlugin extends Plugin {
     private void launchInstaller(PluginCall call, File apkFile) {
         Activity activity = getActivity();
         if (activity == null) {
+            updateInProgress.set(false);
             deleteAllUpdateApks();
             call.reject("Activity unavailable to launch installer");
             return;
@@ -159,12 +263,14 @@ public class ApkUpdaterPlugin extends Plugin {
 
             Intent installIntent = new Intent(Intent.ACTION_VIEW);
             installIntent.setDataAndType(apkUri, "application/vnd.android.package-archive");
+            installIntent.setClipData(ClipData.newRawUri("", apkUri));
             installIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
             installIntent.putExtra(Intent.EXTRA_RETURN_RESULT, true);
 
             emitState("installing", "Opening Android package installer");
             startActivityForResult(call, installIntent, "onInstallActivityResult");
         } catch (Exception ex) {
+            updateInProgress.set(false);
             deleteAllUpdateApks();
             call.reject("Could not launch Android installer: " + ex.getMessage(), ex);
         }
@@ -173,6 +279,12 @@ public class ApkUpdaterPlugin extends Plugin {
     @PluginMethod
     public void cleanupApks(PluginCall call) {
         executor.execute(() -> {
+            if (updateInProgress.get()) {
+                JSObject ret = new JSObject();
+                ret.put("deletedCount", 0);
+                call.resolve(ret);
+                return;
+            }
             int deleted = deleteAllUpdateApks();
             JSObject ret = new JSObject();
             ret.put("deletedCount", deleted);
@@ -194,6 +306,13 @@ public class ApkUpdaterPlugin extends Plugin {
             call.reject("Missing APK download URL");
             return;
         }
+
+        if (!updateInProgress.compareAndSet(false, true)) {
+            call.reject("An update download is already in progress.");
+            return;
+        }
+
+        cancelScheduledCleanup();
 
         String requestedName = call.getString("fileName", "tamagotchi-update.apk");
         String safeName = requestedName.replaceAll("[^a-zA-Z0-9._-]", "_");
@@ -235,9 +354,11 @@ public class ApkUpdaterPlugin extends Plugin {
                     emitProgress(downloaded, totalBytes > 0 ? totalBytes : downloaded);
                 }
 
-                if (!isValidApkArchive(targetFile)) {
+                String validationError = validateDownloadedApk(targetFile);
+                if (validationError != null) {
+                    updateInProgress.set(false);
                     deleteAllUpdateApks();
-                    call.reject("Downloaded file is not a valid Android APK package.");
+                    call.reject(validationError);
                     return;
                 }
 
@@ -246,6 +367,7 @@ public class ApkUpdaterPlugin extends Plugin {
 
                 Activity activity = getActivity();
                 if (activity == null) {
+                    updateInProgress.set(false);
                     deleteAllUpdateApks();
                     call.reject("Activity unavailable");
                     return;
@@ -267,6 +389,7 @@ public class ApkUpdaterPlugin extends Plugin {
                     }
                 });
             } catch (Exception ex) {
+                updateInProgress.set(false);
                 deleteAllUpdateApks();
                 call.reject("Update download failed: " + ex.getMessage(), ex);
             } finally {
@@ -278,9 +401,10 @@ public class ApkUpdaterPlugin extends Plugin {
     }
 
     @ActivityCallback
-    private void onInstallPermissionResult(PluginCall call, ActivityResult result) {
+    public void onInstallPermissionResult(PluginCall call, ActivityResult result) {
         File apk = pendingApkFile;
         if (apk == null || !apk.exists()) {
+            updateInProgress.set(false);
             call.reject("Downloaded update package was cleared. Please try updating again.");
             return;
         }
@@ -288,6 +412,7 @@ public class ApkUpdaterPlugin extends Plugin {
         if (hasInstallPermission()) {
             launchInstaller(call, apk);
         } else {
+            updateInProgress.set(false);
             deleteAllUpdateApks();
             JSObject ret = new JSObject();
             ret.put("status", "permission-denied");
@@ -297,15 +422,32 @@ public class ApkUpdaterPlugin extends Plugin {
     }
 
     @ActivityCallback
-    private void onInstallActivityResult(PluginCall call, ActivityResult result) {
-        // Delete the temporary APK immediately once the Android Package Installer finishes or is dismissed
-        int deletedCount = deleteAllUpdateApks();
+    public void onInstallActivityResult(PluginCall call, ActivityResult result) {
+        updateInProgress.set(false);
         int resultCode = result != null ? result.getResultCode() : Activity.RESULT_CANCELED;
 
+        if (resultCode == Activity.RESULT_OK) {
+            int deletedCount = deleteAllUpdateApks();
+            JSObject ret = new JSObject();
+            ret.put("status", "installed");
+            ret.put("deleted", deletedCount > 0);
+            ret.put("deletedCount", deletedCount);
+            call.resolve(ret);
+            return;
+        }
+
+        // Delay deletion briefly so Android 12-15 async PackageInstaller sessions finish reading the APK
+        // before it is purged; successful self-updates also purge immediately on relaunch in load().
+        cancelScheduledCleanup();
+        pendingCleanupTask = executor.schedule(() -> {
+            if (!updateInProgress.get()) {
+                deleteAllUpdateApks();
+            }
+        }, POST_INSTALL_CLEANUP_DELAY_MS, TimeUnit.MILLISECONDS);
+
         JSObject ret = new JSObject();
-        ret.put("status", resultCode == Activity.RESULT_OK ? "installed" : "dismissed");
-        ret.put("deleted", deletedCount > 0);
-        ret.put("deletedCount", deletedCount);
+        ret.put("status", "dismissed");
+        ret.put("deleted", true);
         call.resolve(ret);
     }
 }

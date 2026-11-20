@@ -69,6 +69,7 @@ interface CapacitorWindow extends Window {
   Capacitor?: {
     isNativePlatform?: () => boolean;
     getPlatform?: () => string;
+    registerPlugin?: <T>(pluginName: string) => T;
     Plugins?: {
       ApkUpdater?: NativeApkUpdaterPlugin;
     };
@@ -104,7 +105,18 @@ export function compareSemver(a: string, b: string): number {
 function getNativeApkUpdater(): NativeApkUpdaterPlugin | null {
   if (typeof window === 'undefined') return null;
   const cap = (window as CapacitorWindow).Capacitor;
-  const plugin = cap?.Plugins?.ApkUpdater;
+  if (!cap) return null;
+  if (typeof cap.isNativePlatform === 'function' && !cap.isNativePlatform()) {
+    return null;
+  }
+  if (typeof cap.getPlatform === 'function' && cap.getPlatform() !== 'android') {
+    return null;
+  }
+  const plugin =
+    cap.Plugins?.ApkUpdater ??
+    (typeof cap.registerPlugin === 'function'
+      ? cap.registerPlugin<NativeApkUpdaterPlugin>('ApkUpdater')
+      : undefined);
   if (!plugin || typeof plugin.downloadAndInstall !== 'function') {
     return null;
   }
@@ -118,7 +130,8 @@ function isCapacitorNativeApp(): boolean {
   if (typeof cap.isNativePlatform === 'function') {
     return cap.isNativePlatform();
   }
-  return Boolean(cap.Plugins?.ApkUpdater);
+  const plat = cap.getPlatform?.();
+  return plat === 'android' || plat === 'ios';
 }
 
 function getInitialRepo(): string {
@@ -225,6 +238,7 @@ export function useAppUpdater() {
     null,
   );
   const swRegistrationRef = useRef<ServiceWorkerRegistration | null>(null);
+  const swUpdateReadyRef = useRef(false);
 
   // On native Android launch, guarantee any temporary update APK from a prior install is deleted
   useEffect(() => {
@@ -244,6 +258,7 @@ export function useAppUpdater() {
     const updateSW = registerSW({
       immediate: true,
       onNeedRefresh() {
+        swUpdateReadyRef.current = true;
         setSwUpdateReady(true);
         setStatus('update-available');
         setBannerDismissed(false);
@@ -267,9 +282,10 @@ export function useAppUpdater() {
       setStatus('checking');
       setErrorMessage(null);
 
-      let foundUpdate = swUpdateReady;
+      let foundUpdate = swUpdateReadyRef.current;
       let resolvedRelease: ReleaseInfo | null = null;
       let discoveredRepo = targetRepo;
+      let hadError = false;
 
       // 1. Trigger live Service Worker check if registered (web/PWA)
       if (swRegistrationRef.current) {
@@ -322,12 +338,36 @@ export function useAppUpdater() {
         }
       }
 
-      // 3. Check public GitHub Releases API (free, no API key needed)
+      // 3. Check public GitHub Releases API (free, no API key needed, bypass HTTP cache)
       if (discoveredRepo && REPO_PATTERN.test(discoveredRepo)) {
+        const mapGitHubRelease = (release: GitHubReleaseResponse): ReleaseInfo | null => {
+          const releaseVersion = normalizeVersion(release.tag_name ?? '');
+          if (!releaseVersion) return null;
+          return {
+            version: releaseVersion,
+            tag: release.tag_name ?? `v${releaseVersion}`,
+            title: release.name || `Tamagotchi v${releaseVersion}`,
+            notes: (release.body ?? '').trim(),
+            publishedAt: release.published_at ?? '',
+            releaseUrl:
+              release.html_url ??
+              `https://github.com/${discoveredRepo}/releases/latest`,
+            assets: (release.assets ?? []).map((asset) => ({
+              id: asset.id,
+              name: asset.name,
+              size: asset.size,
+              downloadUrl: asset.browser_download_url,
+              downloadCount: asset.download_count,
+            })),
+            source: 'github-release',
+          };
+        };
+
         try {
           const ghRes = await fetch(
             `https://api.github.com/repos/${discoveredRepo}/releases/latest`,
             {
+              cache: 'no-store',
               headers: {
                 Accept: 'application/vnd.github+json',
               },
@@ -336,47 +376,64 @@ export function useAppUpdater() {
 
           if (ghRes.ok) {
             const release = (await ghRes.json()) as GitHubReleaseResponse;
-            const releaseVersion = normalizeVersion(release.tag_name ?? '');
+            let releaseInfo = mapGitHubRelease(release);
 
-            if (releaseVersion) {
-              const releaseInfo: ReleaseInfo = {
-                version: releaseVersion,
-                tag: release.tag_name ?? `v${releaseVersion}`,
-                title: release.name || `Tamagotchi v${releaseVersion}`,
-                notes: (release.body ?? '').trim(),
-                publishedAt: release.published_at ?? '',
-                releaseUrl:
-                  release.html_url ??
-                  `https://github.com/${discoveredRepo}/releases/latest`,
-                assets: (release.assets ?? []).map((asset) => ({
-                  id: asset.id,
-                  name: asset.name,
-                  size: asset.size,
-                  downloadUrl: asset.browser_download_url,
-                  downloadCount: asset.download_count,
-                })),
-                source: 'github-release',
-              };
+            // On native Android, if latest release doesn't have an APK yet, check recent releases for the newest APK
+            if (
+              isNativeAndroid &&
+              releaseInfo &&
+              !releaseInfo.assets.some((a) => /\.apk$/i.test(a.name))
+            ) {
+              try {
+                const listRes = await fetch(
+                  `https://api.github.com/repos/${discoveredRepo}/releases?per_page=5`,
+                  {
+                    cache: 'no-store',
+                    headers: { Accept: 'application/vnd.github+json' },
+                  },
+                );
+                if (listRes.ok) {
+                  const list = (await listRes.json()) as GitHubReleaseResponse[];
+                  const withApk = list
+                    .map(mapGitHubRelease)
+                    .find(
+                      (r): r is ReleaseInfo =>
+                        r !== null &&
+                        r.assets.some((a) => /\.apk$/i.test(a.name)),
+                    );
+                  if (withApk) {
+                    releaseInfo = withApk;
+                  }
+                }
+              } catch {
+                // Keep latest release info if list fallback fails
+              }
+            }
 
+            if (releaseInfo) {
               resolvedRelease = releaseInfo;
-              if (compareSemver(releaseVersion, currentVersion) > 0) {
+              if (compareSemver(releaseInfo.version, currentVersion) > 0) {
                 foundUpdate = true;
               }
             }
           } else if (ghRes.status === 404) {
+            hadError = true;
             setErrorMessage(
               `No published GitHub Releases found yet for ${discoveredRepo}.`,
             );
           } else if (ghRes.status === 403) {
+            hadError = true;
             setErrorMessage(
               'GitHub API rate limit reached. Try checking again shortly.',
             );
           } else {
+            hadError = true;
             setErrorMessage(
               `Could not check GitHub Releases (HTTP ${ghRes.status}).`,
             );
           }
         } catch {
+          hadError = true;
           setErrorMessage(
             'Unable to reach GitHub Releases. Check your network connection.',
           );
@@ -393,13 +450,15 @@ export function useAppUpdater() {
         setStatus((prev) =>
           prev === 'downloading' || prev === 'installing' || prev === 'updating'
             ? prev
-            : 'up-to-date',
+            : hadError
+              ? 'error'
+              : 'up-to-date',
         );
       }
 
       return resolvedRelease;
     },
-    [currentVersion, githubRepo, isNativeApp, swUpdateReady],
+    [currentVersion, githubRepo, isNativeAndroid, isNativeApp],
   );
 
   // Silent startup check + periodic 30-minute background check
@@ -488,9 +547,16 @@ export function useAppUpdater() {
           const progressHandle = await apkUpdater.addListener(
             'downloadProgress',
             (data) => {
-              const bytesDownloaded = Number(data.bytesDownloaded ?? 0);
-              const totalBytes = Number(data.totalBytes ?? apkAsset.size);
-              const percent = Number(data.percent ?? 0);
+              const bytesDownloaded = Math.max(0, Number(data.bytesDownloaded ?? 0));
+              const rawTotal = Number(data.totalBytes ?? -1);
+              const totalBytes = rawTotal > 0 ? rawTotal : apkAsset.size;
+              const rawPercent = Number(data.percent ?? -1);
+              const percent =
+                rawPercent >= 0
+                  ? Math.min(100, rawPercent)
+                  : totalBytes > 0
+                    ? Math.min(100, Math.round((bytesDownloaded * 100) / totalBytes))
+                    : 0;
               setDownloadProgress({ bytesDownloaded, totalBytes, percent });
             },
           );

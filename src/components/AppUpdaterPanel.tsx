@@ -121,6 +121,7 @@ export function AppUpdaterPanel({
     if (isInstalling) return 'Opening Android installer…';
     if (isUpdating) return 'Applying update…';
     if (isChecking) return 'Checking for updates…';
+    if (status === 'error') return 'Update check failed';
     if (updateAvailable && latestRelease) {
       return `v${latestRelease.version} available`;
     }

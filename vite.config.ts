@@ -11,6 +11,7 @@ const pkg = JSON.parse(
 const rawBase = process.env.VITE_BASE_PATH || '/';
 const base = rawBase === './' ? './' : rawBase.replace(/\/+$/, '') + '/';
 const assetPrefix = base === './' ? './' : base;
+const disablePwa = process.env.VITE_DISABLE_PWA === 'true';
 
 export default defineConfig({
   base,
@@ -22,6 +23,7 @@ export default defineConfig({
     react(),
     tailwindcss(),
     VitePWA({
+      disable: disablePwa,
       registerType: 'prompt',
       injectRegister: null,
       includeAssets: [

@@ -65,7 +65,9 @@ jobs:
         env:
           BUMP_TYPE: ${{ inputs.bump || 'auto' }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-        run: node scripts/bump-version.mjs
+        run: |
+          git fetch --tags --force
+          node scripts/bump-version.mjs
 
       - name: Commit bumped version & tag
         run: |
@@ -134,7 +136,7 @@ jobs:
             fs.writeFileSync("release-artifacts/latest.json", JSON.stringify(manifest, null, 2) + "\n");
           '
 
-      - name: Create GitHub Release with Web artifacts
+      - name: Create Draft GitHub Release with Web artifacts
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -143,7 +145,7 @@ jobs:
             release-artifacts/* \
             --title "Tamagotchi $TAG" \
             --generate-notes \
-            --latest
+            --draft
 
   build-desktop:
     name: Build Desktop (${{ matrix.label }})
@@ -275,13 +277,23 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleRelease
 
-      - name: Upload Android APK to GitHub Release
+      - name: Verify APK signature & upload to GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.release.outputs.tag }}
           VERSION: ${{ needs.release.outputs.version }}
         run: |
-          cp mobile/android/app/build/outputs/apk/release/app-release.apk "Tamagotchi-v${VERSION}-Android.apk"
+          APK_SRC="mobile/android/app/build/outputs/apk/release/app-release.apk"
+          if [ ! -f "$APK_SRC" ]; then
+            echo "Signed release APK not found at $APK_SRC"
+            ls -la mobile/android/app/build/outputs/apk/release/ || true
+            exit 1
+          fi
+          APKSIGNER=$(find "${ANDROID_HOME:-$ANDROID_SDK_ROOT}/build-tools" -name apksigner 2>/dev/null | sort -V | tail -n 1 || true)
+          if [ -n "$APKSIGNER" ]; then
+            "$APKSIGNER" verify --print-certs "$APK_SRC"
+          fi
+          cp "$APK_SRC" "Tamagotchi-v${VERSION}-Android.apk"
           gh release upload "$TAG" "Tamagotchi-v${VERSION}-Android.apk" --clobber
 
   build-ios:
@@ -312,6 +324,12 @@ jobs:
           npm install --no-package-lock --no-audit --no-fund
           npx cap add ios
           npx cap sync ios
+          ICON_DIR="ios/App/App/Assets.xcassets/AppIcon.appiconset"
+          if [ -d "$ICON_DIR" ] && [ -f "../public/pwa-512x512.png" ]; then
+            for f in "$ICON_DIR"/*.png; do
+              [ -f "$f" ] && cp "../public/pwa-512x512.png" "$f"
+            done
+          fi
 
       - name: Compile unsigned iOS .ipa
         working-directory: mobile/ios/App
@@ -329,6 +347,7 @@ jobs:
             -scheme App \
             -configuration Release \
             -sdk iphoneos \
+            -destination "generic/platform=iOS" \
             -derivedDataPath build \
             MARKETING_VERSION="$VERSION" \
             CURRENT_PROJECT_VERSION="$BUILD_NUM" \
@@ -355,6 +374,20 @@ jobs:
           VERSION: ${{ needs.release.outputs.version }}
         run: |
           gh release upload "$TAG" "$GITHUB_WORKSPACE/Tamagotchi-v${VERSION}-iOS-unsigned.ipa" --clobber
+
+  publish-release:
+    name: Publish Complete Release
+    needs: [release, build-desktop, build-android, build-ios]
+    if: always() && needs.release.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish GitHub Release as Latest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.release.outputs.tag }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh release edit "$TAG" --repo "$REPO" --draft=false --latest
 
   deploy-pages:
     name: Deploy Live PWA (GitHub Pages)
