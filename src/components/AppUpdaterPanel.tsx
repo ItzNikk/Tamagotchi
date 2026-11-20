@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import type {
   DevicePlatform,
+  DownloadProgress,
   ReleaseAsset,
   ReleaseInfo,
   UpdateStatus,
@@ -27,10 +28,13 @@ const PLATFORM_LABELS: Record<DevicePlatform, string> = {
 interface AppUpdaterPanelProps {
   currentVersion: string;
   platform: DevicePlatform;
+  isNativeAndroid: boolean;
   recommendedAsset: ReleaseAsset | null;
   githubRepo: string;
   status: UpdateStatus;
   latestRelease: ReleaseInfo | null;
+  downloadProgress: DownloadProgress | null;
+  updateNotice: string | null;
   updateAvailable: boolean;
   offlineReady: boolean;
   lastCheckedAt: Date | null;
@@ -65,10 +69,13 @@ function formatDate(iso: string): string {
 export function AppUpdaterPanel({
   currentVersion,
   platform,
+  isNativeAndroid,
   recommendedAsset,
   githubRepo,
   status,
   latestRelease,
+  downloadProgress,
+  updateNotice,
   updateAvailable,
   offlineReady,
   lastCheckedAt,
@@ -88,7 +95,13 @@ export function AppUpdaterPanel({
   }, [githubRepo]);
 
   const isChecking = status === 'checking';
+  const isDownloading = status === 'downloading';
+  const isInstalling = status === 'installing';
   const isUpdating = status === 'updating';
+  const isBusy = isDownloading || isInstalling || isUpdating;
+  const downloadPercent = downloadProgress
+    ? Math.max(0, Math.min(100, Math.round(downloadProgress.percent)))
+    : 0;
 
   const handleRepoSubmit = (event: FormEvent) => {
     event.preventDefault();
@@ -104,6 +117,8 @@ export function AppUpdaterPanel({
   };
 
   const statusSummary = (() => {
+    if (isDownloading) return `Downloading APK · ${downloadPercent}%`;
+    if (isInstalling) return 'Opening Android installer…';
     if (isUpdating) return 'Applying update…';
     if (isChecking) return 'Checking for updates…';
     if (updateAvailable && latestRelease) {
@@ -119,6 +134,13 @@ export function AppUpdaterPanel({
     return 'Ready to check';
   })();
 
+  const primaryActionLabel = (() => {
+    if (isDownloading) return `Downloading ${downloadPercent}%`;
+    if (isInstalling) return 'Installing…';
+    if (isUpdating) return 'Updating…';
+    return 'Update Now';
+  })();
+
   return (
     <div className="space-y-4 sm:space-y-5">
       {/* Primary Software Update & Multi-Platform Install Surface */}
@@ -129,57 +151,99 @@ export function AppUpdaterPanel({
         contentClassName="divide-y divide-white/15 px-5 sm:px-7"
       >
         {/* Row 1: Version & In-App Update Trigger */}
-        <div className="flex flex-col gap-4 py-5 sm:flex-row sm:items-center sm:justify-between">
-          <div className="min-w-0">
-            <p className="font-display text-[15px] font-semibold text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.45)]">
-              App Updates
-            </p>
-            <p className="mt-1 text-sm tabular-nums text-white/90 drop-shadow-[0_1px_3px_rgba(0,0,0,0.45)]">
-              Installed v{currentVersion} <span aria-hidden="true">·</span>{' '}
-              {statusSummary}
-              {offlineReady ? (
-                <>
-                  {' '}
-                  <span aria-hidden="true">·</span> Offline ready
-                </>
-              ) : null}
-            </p>
-            {errorMessage ? (
-              <p className="mt-1.5 text-xs font-medium text-amber-200 drop-shadow-[0_1px_3px_rgba(0,0,0,0.55)]">
-                {errorMessage}
+        <div className="py-5">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <p className="font-display text-[15px] font-semibold text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.45)]">
+                App Updates
               </p>
-            ) : null}
-          </div>
+              <p className="mt-1 text-sm tabular-nums text-white/90 drop-shadow-[0_1px_3px_rgba(0,0,0,0.45)]">
+                Installed v{currentVersion} <span aria-hidden="true">·</span>{' '}
+                {statusSummary}
+                {offlineReady ? (
+                  <>
+                    {' '}
+                    <span aria-hidden="true">·</span> Offline ready
+                  </>
+                ) : null}
+              </p>
+              {isNativeAndroid && !errorMessage && !updateNotice ? (
+                <p className="mt-1 text-xs leading-relaxed text-white/80 drop-shadow-[0_1px_3px_rgba(0,0,0,0.45)]">
+                  Downloads the signed release APK in-app, opens the Android
+                  installer, and deletes the temporary APK automatically.
+                </p>
+              ) : null}
+              {updateNotice && !errorMessage ? (
+                <p className="mt-1.5 text-xs font-medium text-emerald-200 drop-shadow-[0_1px_3px_rgba(0,0,0,0.55)]">
+                  {updateNotice}
+                </p>
+              ) : null}
+              {errorMessage ? (
+                <p className="mt-1.5 text-xs font-medium text-amber-200 drop-shadow-[0_1px_3px_rgba(0,0,0,0.55)]">
+                  {errorMessage}
+                </p>
+              ) : null}
+            </div>
 
-          <div className="flex shrink-0 flex-wrap items-center gap-2.5">
-            {updateAvailable ? (
+            <div className="flex shrink-0 flex-wrap items-center gap-2.5">
+              {updateAvailable ? (
+                <button
+                  type="button"
+                  disabled={isBusy}
+                  onClick={onApplyUpdate}
+                  className="ios-glass-button ios-glass-active-lens inline-flex min-h-[44px] cursor-pointer items-center gap-2 whitespace-nowrap rounded-full px-5 py-2.5 text-sm font-semibold tabular-nums text-white disabled:cursor-wait disabled:opacity-75 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/85"
+                >
+                  <RefreshCw
+                    aria-hidden="true"
+                    className={`h-4 w-4 ${isBusy ? 'animate-spin' : ''}`}
+                  />
+                  {primaryActionLabel}
+                </button>
+              ) : null}
+
               <button
                 type="button"
-                disabled={isUpdating}
-                onClick={onApplyUpdate}
-                className="ios-glass-button ios-glass-active-lens inline-flex min-h-[44px] cursor-pointer items-center gap-2 whitespace-nowrap rounded-full px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-wait disabled:opacity-70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/85"
+                disabled={isChecking || isBusy}
+                onClick={onCheckForUpdates}
+                className="ios-glass-button inline-flex min-h-[44px] cursor-pointer items-center gap-2 whitespace-nowrap rounded-full border border-white/30 bg-white/14 px-4 py-2.5 text-sm font-medium text-white hover:bg-white/22 disabled:cursor-wait disabled:opacity-65 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/85"
               >
                 <RefreshCw
                   aria-hidden="true"
-                  className={`h-4 w-4 ${isUpdating ? 'animate-spin' : ''}`}
+                  className={`h-4 w-4 ${isChecking ? 'animate-spin' : ''}`}
                 />
-                {isUpdating ? 'Updating…' : 'Update Now'}
+                {isChecking ? 'Checking…' : 'Check for Updates'}
               </button>
-            ) : null}
-
-            <button
-              type="button"
-              disabled={isChecking || isUpdating}
-              onClick={onCheckForUpdates}
-              className="ios-glass-button inline-flex min-h-[44px] cursor-pointer items-center gap-2 whitespace-nowrap rounded-full border border-white/30 bg-white/14 px-4 py-2.5 text-sm font-medium text-white hover:bg-white/22 disabled:cursor-wait disabled:opacity-65 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/85"
-            >
-              <RefreshCw
-                aria-hidden="true"
-                className={`h-4 w-4 ${isChecking ? 'animate-spin' : ''}`}
-              />
-              {isChecking ? 'Checking…' : 'Check for Updates'}
-            </button>
+            </div>
           </div>
+
+          {isDownloading && downloadProgress ? (
+            <div className="mt-4 space-y-1.5">
+              <div className="flex items-center justify-between text-xs tabular-nums text-white/85">
+                <span>
+                  {formatBytes(downloadProgress.bytesDownloaded)}
+                  {downloadProgress.totalBytes > 0
+                    ? ` / ${formatBytes(downloadProgress.totalBytes)}`
+                    : ''}
+                </span>
+                <span>{downloadPercent}%</span>
+              </div>
+              <div
+                role="progressbar"
+                aria-label="APK download progress"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={downloadPercent}
+                className="h-2 w-full overflow-hidden rounded-full bg-white/16"
+              >
+                <div
+                  className="h-full w-full origin-left rounded-full bg-gradient-to-r from-amber-200 via-white to-amber-100 transition-transform duration-150 ease-out"
+                  style={{
+                    transform: `scaleX(${Math.max(0.02, downloadPercent / 100)})`,
+                  }}
+                />
+              </div>
+            </div>
+          ) : null}
         </div>
 
         {/* Row 2: GitHub Release Repository Connection */}
@@ -243,13 +307,15 @@ export function AppUpdaterPanel({
               Install on Device
             </p>
             <p className="mt-1 text-sm text-white/90 drop-shadow-[0_1px_3px_rgba(0,0,0,0.45)]">
-              {isInstalled
-                ? 'Running as an installed standalone app'
-                : 'Add Tamagotchi to your home screen or desktop for offline access and instant OTA updates'}
+              {isNativeAndroid
+                ? 'Running as the native Android app with automatic in-app APK updates'
+                : isInstalled
+                  ? 'Running as an installed standalone app'
+                  : 'Add Tamagotchi to your home screen or desktop for offline access and instant OTA updates'}
             </p>
           </div>
 
-          {!isInstalled && (isInstallable || isIOS) ? (
+          {!isNativeAndroid && !isInstalled && (isInstallable || isIOS) ? (
             <div className="shrink-0">
               {isInstallable ? (
                 <button
@@ -347,15 +413,27 @@ export function AppUpdaterPanel({
                   </span>
                 </p>
               </div>
-              <a
-                href={recommendedAsset.downloadUrl}
-                download={recommendedAsset.name}
-                rel="noopener noreferrer"
-                className="ios-glass-button ios-glass-active-lens inline-flex min-h-[44px] shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-full px-5 py-2.5 text-sm font-semibold text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/85"
-              >
-                <Download aria-hidden="true" className="h-4 w-4" />
-                Download for {PLATFORM_LABELS[platform]}
-              </a>
+              {isNativeAndroid && /\.apk$/i.test(recommendedAsset.name) ? (
+                <button
+                  type="button"
+                  disabled={isBusy}
+                  onClick={onApplyUpdate}
+                  className="ios-glass-button ios-glass-active-lens inline-flex min-h-[44px] shrink-0 cursor-pointer items-center justify-center gap-2 whitespace-nowrap rounded-full px-5 py-2.5 text-sm font-semibold tabular-nums text-white disabled:cursor-wait disabled:opacity-75 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/85"
+                >
+                  <Download aria-hidden="true" className="h-4 w-4" />
+                  {isBusy ? primaryActionLabel : 'Download & Install APK'}
+                </button>
+              ) : (
+                <a
+                  href={recommendedAsset.downloadUrl}
+                  download={recommendedAsset.name}
+                  rel="noopener noreferrer"
+                  className="ios-glass-button ios-glass-active-lens inline-flex min-h-[44px] shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-full px-5 py-2.5 text-sm font-semibold text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/85"
+                >
+                  <Download aria-hidden="true" className="h-4 w-4" />
+                  Download for {PLATFORM_LABELS[platform]}
+                </a>
+              )}
             </div>
           ) : null}
 

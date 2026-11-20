@@ -20,14 +20,62 @@ export interface ReleaseInfo {
   source: 'service-worker' | 'version-manifest' | 'github-release';
 }
 
+export interface DownloadProgress {
+  bytesDownloaded: number;
+  totalBytes: number;
+  percent: number;
+}
+
 export type UpdateStatus =
   | 'idle'
   | 'checking'
   | 'up-to-date'
   | 'update-available'
+  | 'downloading'
+  | 'installing'
   | 'updating'
   | 'error';
 
+export type DevicePlatform =
+  | 'windows'
+  | 'macos'
+  | 'linux'
+  | 'android'
+  | 'ios'
+  | 'web';
+
+interface CapacitorPluginListenerHandle {
+  remove: () => Promise<void> | void;
+}
+
+interface NativeApkUpdaterPlugin {
+  downloadAndInstall: (options: {
+    url: string;
+    fileName?: string;
+  }) => Promise<{
+    status: 'installed' | 'dismissed' | 'permission-denied';
+    deleted?: boolean;
+    deletedCount?: number;
+  }>;
+  cleanupApks: () => Promise<{ deletedCount: number }>;
+  canInstallPackages: () => Promise<{ granted: boolean }>;
+  addListener?: (
+    eventName: 'downloadProgress' | 'updateState',
+    listenerFunc: (data: Record<string, unknown>) => void,
+  ) => Promise<CapacitorPluginListenerHandle> | CapacitorPluginListenerHandle;
+}
+
+interface CapacitorWindow extends Window {
+  Capacitor?: {
+    isNativePlatform?: () => boolean;
+    getPlatform?: () => string;
+    Plugins?: {
+      ApkUpdater?: NativeApkUpdaterPlugin;
+    };
+  };
+}
+
+const DEFAULT_GITHUB_REPO = 'ItzNikk/Tamagotchi';
 const REPO_STORAGE_KEY = 'tamagotchi:github-repo';
 const REPO_PATTERN = /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/;
 
@@ -53,6 +101,26 @@ export function compareSemver(a: string, b: string): number {
   return 0;
 }
 
+function getNativeApkUpdater(): NativeApkUpdaterPlugin | null {
+  if (typeof window === 'undefined') return null;
+  const cap = (window as CapacitorWindow).Capacitor;
+  const plugin = cap?.Plugins?.ApkUpdater;
+  if (!plugin || typeof plugin.downloadAndInstall !== 'function') {
+    return null;
+  }
+  return plugin;
+}
+
+function isCapacitorNativeApp(): boolean {
+  if (typeof window === 'undefined') return false;
+  const cap = (window as CapacitorWindow).Capacitor;
+  if (!cap) return false;
+  if (typeof cap.isNativePlatform === 'function') {
+    return cap.isNativePlatform();
+  }
+  return Boolean(cap.Plugins?.ApkUpdater);
+}
+
 function getInitialRepo(): string {
   try {
     const saved = window.localStorage.getItem(REPO_STORAGE_KEY)?.trim();
@@ -61,42 +129,17 @@ function getInitialRepo(): string {
     // Ignore storage errors in restricted contexts
   }
   const envRepo = (import.meta.env.VITE_GITHUB_REPO ?? '').trim();
-  return REPO_PATTERN.test(envRepo) ? envRepo : '';
+  if (REPO_PATTERN.test(envRepo)) return envRepo;
+  return DEFAULT_GITHUB_REPO;
 }
-
-interface VersionManifestResponse {
-  version?: string;
-  releasedAt?: string;
-  repository?: string;
-  releaseUrl?: string;
-  notes?: string;
-}
-
-interface GitHubReleaseResponse {
-  tag_name?: string;
-  name?: string;
-  body?: string;
-  published_at?: string;
-  html_url?: string;
-  assets?: Array<{
-    id: number;
-    name: string;
-    size: number;
-    browser_download_url: string;
-    download_count: number;
-  }>;
-}
-
-export type DevicePlatform =
-  | 'windows'
-  | 'macos'
-  | 'linux'
-  | 'android'
-  | 'ios'
-  | 'web';
 
 export function detectPlatform(): DevicePlatform {
   if (typeof navigator === 'undefined') return 'web';
+  const cap = (window as CapacitorWindow).Capacitor;
+  const capPlatform = cap?.getPlatform?.();
+  if (capPlatform === 'android') return 'android';
+  if (capPlatform === 'ios') return 'ios';
+
   const ua = navigator.userAgent.toLowerCase();
   if (/android/.test(ua)) return 'android';
   if (/iphone|ipad|ipod/.test(ua)) return 'ios';
@@ -127,12 +170,51 @@ export function findRecommendedAsset(
   return null;
 }
 
+interface VersionManifestResponse {
+  version?: string;
+  releasedAt?: string;
+  repository?: string;
+  releaseUrl?: string;
+  notes?: string;
+}
+
+interface GitHubReleaseResponse {
+  tag_name?: string;
+  name?: string;
+  body?: string;
+  published_at?: string;
+  html_url?: string;
+  assets?: Array<{
+    id: number;
+    name: string;
+    size: number;
+    browser_download_url: string;
+    download_count: number;
+  }>;
+}
+
+function triggerBrowserFileDownload(url: string, fileName: string) {
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName;
+  link.rel = 'noopener noreferrer';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
 export function useAppUpdater() {
   const currentVersion = normalizeVersion(__APP_VERSION__);
   const platform = detectPlatform();
+  const isNativeAndroid = Boolean(getNativeApkUpdater());
+  const isNativeApp = isCapacitorNativeApp() || window.location.protocol === 'file:';
+
   const [githubRepo, setGithubRepoState] = useState<string>(getInitialRepo);
   const [status, setStatus] = useState<UpdateStatus>('idle');
   const [latestRelease, setLatestRelease] = useState<ReleaseInfo | null>(null);
+  const [downloadProgress, setDownloadProgress] =
+    useState<DownloadProgress | null>(null);
+  const [updateNotice, setUpdateNotice] = useState<string | null>(null);
   const [swUpdateReady, setSwUpdateReady] = useState(false);
   const [offlineReady, setOfflineReady] = useState(false);
   const [lastCheckedAt, setLastCheckedAt] = useState<Date | null>(null);
@@ -144,10 +226,18 @@ export function useAppUpdater() {
   );
   const swRegistrationRef = useRef<ServiceWorkerRegistration | null>(null);
 
+  // On native Android launch, guarantee any temporary update APK from a prior install is deleted
   useEffect(() => {
-    const isFileProtocol = window.location.protocol === 'file:';
-    const isCapacitorNative = 'Capacitor' in window;
-    if (isFileProtocol || isCapacitorNative || !('serviceWorker' in navigator)) {
+    const apkUpdater = getNativeApkUpdater();
+    if (!apkUpdater) return;
+    void apkUpdater.cleanupApks().catch(() => {
+      // Non-fatal cleanup error
+    });
+  }, []);
+
+  // Register PWA Service Worker on web/PWA environments only (skip inside file:// Electron or Capacitor APK/IPA)
+  useEffect(() => {
+    if (isNativeApp || !('serviceWorker' in navigator)) {
       return;
     }
 
@@ -169,10 +259,10 @@ export function useAppUpdater() {
     });
 
     updateSWRef.current = updateSW;
-  }, []);
+  }, [isNativeApp]);
 
   const checkForUpdates = useCallback(
-    async (repoOverride?: string) => {
+    async (repoOverride?: string): Promise<ReleaseInfo | null> => {
       const targetRepo = (repoOverride ?? githubRepo).trim();
       setStatus('checking');
       setErrorMessage(null);
@@ -181,7 +271,7 @@ export function useAppUpdater() {
       let resolvedRelease: ReleaseInfo | null = null;
       let discoveredRepo = targetRepo;
 
-      // 1. Trigger live Service Worker check if registered
+      // 1. Trigger live Service Worker check if registered (web/PWA)
       if (swRegistrationRef.current) {
         try {
           await swRegistrationRef.current.update();
@@ -190,43 +280,49 @@ export function useAppUpdater() {
         }
       }
 
-      // 2. Check deployed version.json (always bypassed from cache)
-      try {
-        const res = await fetch(
-          `${import.meta.env.BASE_URL}version.json?t=${Date.now()}`,
-          {
-            cache: 'no-store',
-          },
-        );
-        if (res.ok) {
-          const manifest = (await res.json()) as VersionManifestResponse;
-          if (!discoveredRepo && manifest.repository && REPO_PATTERN.test(manifest.repository)) {
-            discoveredRepo = manifest.repository;
-            setGithubRepoState(manifest.repository);
-          }
+      // 2. Check deployed version.json on web/PWA (bypass cache)
+      if (!isNativeApp) {
+        try {
+          const res = await fetch(
+            `${import.meta.env.BASE_URL}version.json?t=${Date.now()}`,
+            {
+              cache: 'no-store',
+            },
+          );
+          if (res.ok) {
+            const manifest = (await res.json()) as VersionManifestResponse;
+            if (
+              !discoveredRepo &&
+              manifest.repository &&
+              REPO_PATTERN.test(manifest.repository)
+            ) {
+              discoveredRepo = manifest.repository;
+              setGithubRepoState(manifest.repository);
+            }
 
-          if (
-            manifest.version &&
-            compareSemver(manifest.version, currentVersion) > 0
-          ) {
-            foundUpdate = true;
-            resolvedRelease = {
-              version: normalizeVersion(manifest.version),
-              tag: `v${normalizeVersion(manifest.version)}`,
-              title: `Tamagotchi v${normalizeVersion(manifest.version)}`,
-              notes: manifest.notes ?? 'A newer build is ready to apply.',
-              publishedAt: manifest.releasedAt ?? new Date().toISOString(),
-              releaseUrl: manifest.releaseUrl ?? '',
-              assets: [],
-              source: 'version-manifest',
-            };
+            if (
+              manifest.version &&
+              compareSemver(manifest.version, currentVersion) > 0
+            ) {
+              foundUpdate = true;
+              resolvedRelease = {
+                version: normalizeVersion(manifest.version),
+                tag: `v${normalizeVersion(manifest.version)}`,
+                title: `Tamagotchi v${normalizeVersion(manifest.version)}`,
+                notes: manifest.notes ?? 'A newer build is ready to apply.',
+                publishedAt: manifest.releasedAt ?? new Date().toISOString(),
+                releaseUrl: manifest.releaseUrl ?? '',
+                assets: [],
+                source: 'version-manifest',
+              };
+            }
           }
+        } catch {
+          // Offline or manifest unavailable
         }
-      } catch {
-        // Offline or manifest unavailable
       }
 
-      // 3. Check public GitHub Releases API (free, no key needed) when repo is configured
+      // 3. Check public GitHub Releases API (free, no API key needed)
       if (discoveredRepo && REPO_PATTERN.test(discoveredRepo)) {
         try {
           const ghRes = await fetch(
@@ -294,10 +390,16 @@ export function useAppUpdater() {
         setStatus('update-available');
         setBannerDismissed(false);
       } else {
-        setStatus((prev) => (prev === 'updating' ? prev : 'up-to-date'));
+        setStatus((prev) =>
+          prev === 'downloading' || prev === 'installing' || prev === 'updating'
+            ? prev
+            : 'up-to-date',
+        );
       }
+
+      return resolvedRelease;
     },
-    [currentVersion, githubRepo, swUpdateReady],
+    [currentVersion, githubRepo, isNativeApp, swUpdateReady],
   );
 
   // Silent startup check + periodic 30-minute background check
@@ -335,7 +437,8 @@ export function useAppUpdater() {
       if (!REPO_PATTERN.test(cleaned)) {
         return {
           ok: false as const,
-          error: 'Enter a repository as owner/repo (for example: octocat/tamagotchi).',
+          error:
+            'Enter a repository as owner/repo (for example: ItzNikk/Tamagotchi).',
         };
       }
 
@@ -352,8 +455,126 @@ export function useAppUpdater() {
   );
 
   const applyUpdate = useCallback(async () => {
-    setStatus('updating');
+    setErrorMessage(null);
+    setUpdateNotice(null);
 
+    const apkUpdater = getNativeApkUpdater();
+
+    // PATH A: Native Android APK — download inside app, launch Android installer, then auto-delete APK
+    if (apkUpdater) {
+      let release = latestRelease;
+      if (!release || release.assets.length === 0) {
+        release = await checkForUpdates();
+      }
+
+      const apkAsset = release?.assets.find((asset) =>
+        /\.apk$/i.test(asset.name),
+      );
+      if (!apkAsset) {
+        setStatus('error');
+        setErrorMessage(
+          'The Android APK for this release is still building on GitHub Actions. Try again in a minute.',
+        );
+        return;
+      }
+
+      setStatus('downloading');
+      setDownloadProgress({ bytesDownloaded: 0, totalBytes: apkAsset.size, percent: 0 });
+      setUpdateNotice(`Downloading ${apkAsset.name}…`);
+
+      const listeners: CapacitorPluginListenerHandle[] = [];
+      try {
+        if (typeof apkUpdater.addListener === 'function') {
+          const progressHandle = await apkUpdater.addListener(
+            'downloadProgress',
+            (data) => {
+              const bytesDownloaded = Number(data.bytesDownloaded ?? 0);
+              const totalBytes = Number(data.totalBytes ?? apkAsset.size);
+              const percent = Number(data.percent ?? 0);
+              setDownloadProgress({ bytesDownloaded, totalBytes, percent });
+            },
+          );
+          listeners.push(progressHandle);
+
+          const stateHandle = await apkUpdater.addListener(
+            'updateState',
+            (data) => {
+              const state = String(data.state ?? '');
+              const message =
+                typeof data.message === 'string' ? data.message : null;
+              if (state === 'installing') {
+                setStatus('installing');
+                setUpdateNotice(message ?? 'Opening Android installer…');
+              } else if (state === 'permission-required') {
+                setStatus('installing');
+                setUpdateNotice(
+                  message ??
+                    'Enable "Allow from this source" in Android settings to install updates.',
+                );
+              }
+            },
+          );
+          listeners.push(stateHandle);
+        }
+
+        const result = await apkUpdater.downloadAndInstall({
+          url: apkAsset.downloadUrl,
+          fileName: apkAsset.name,
+        });
+
+        setDownloadProgress(null);
+
+        if (result.status === 'permission-denied') {
+          setStatus('update-available');
+          setErrorMessage(
+            'Install permission was not granted. Enable "Allow from this source" for Tamagotchi and tap Update Now again.',
+          );
+        } else if (result.status === 'installed') {
+          setStatus('up-to-date');
+          setUpdateNotice('Update installed and temporary APK deleted.');
+        } else {
+          // Installer returned (cancelled or completed in background); APK already deleted natively
+          setStatus('update-available');
+          setUpdateNotice('Installer closed · temporary APK deleted.');
+        }
+      } catch (err) {
+        setDownloadProgress(null);
+        setStatus('error');
+        const msg =
+          err instanceof Error ? err.message : 'Unable to download or install APK.';
+        setErrorMessage(msg);
+        await apkUpdater.cleanupApks().catch(() => {});
+      } finally {
+        for (const handle of listeners) {
+          try {
+            await handle.remove();
+          } catch {
+            // Ignore listener removal errors
+          }
+        }
+      }
+      return;
+    }
+
+    // PATH B: Native Desktop (Electron file://) or Native iOS — download platform installer directly
+    if (isNativeApp) {
+      const release = latestRelease ?? (await checkForUpdates());
+      const asset = release
+        ? findRecommendedAsset(release.assets, platform)
+        : null;
+      if (asset) {
+        setUpdateNotice(`Downloading ${asset.name}…`);
+        triggerBrowserFileDownload(asset.downloadUrl, asset.name);
+      } else {
+        setErrorMessage(
+          'No installer file found yet for this platform on the latest release.',
+        );
+      }
+      return;
+    }
+
+    // PATH C: Web / Installed PWA — apply live Service Worker OTA update & reload
+    setStatus('updating');
     try {
       if (swUpdateReady && updateSWRef.current) {
         await updateSWRef.current(true);
@@ -368,15 +589,17 @@ export function useAppUpdater() {
       if (swRegistrationRef.current) {
         await swRegistrationRef.current.update();
         if (swRegistrationRef.current.waiting) {
-          swRegistrationRef.current.waiting.postMessage({ type: 'SKIP_WAITING' });
+          swRegistrationRef.current.waiting.postMessage({
+            type: 'SKIP_WAITING',
+          });
         }
       }
     } catch {
-      // Fallback directly to fresh reload
+      // Fallback directly to reload
     }
 
     window.location.reload();
-  }, [swUpdateReady]);
+  }, [checkForUpdates, isNativeApp, latestRelease, platform, swUpdateReady]);
 
   const dismissBanner = useCallback(() => {
     setBannerDismissed(true);
@@ -384,6 +607,8 @@ export function useAppUpdater() {
 
   const updateAvailable =
     status === 'update-available' ||
+    status === 'downloading' ||
+    status === 'installing' ||
     swUpdateReady ||
     Boolean(
       latestRelease && compareSemver(latestRelease.version, currentVersion) > 0,
@@ -396,10 +621,13 @@ export function useAppUpdater() {
   return {
     currentVersion,
     platform,
+    isNativeAndroid,
     recommendedAsset,
     githubRepo,
     status,
     latestRelease,
+    downloadProgress,
+    updateNotice,
     updateAvailable,
     swUpdateReady,
     offlineReady,

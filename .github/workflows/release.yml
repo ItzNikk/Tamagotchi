@@ -251,29 +251,29 @@ jobs:
           name: web-dist-native
           path: mobile/www
 
-      - name: Install Capacitor & generate Android project
+      - name: Install Capacitor & configure Android native updater + signing
         working-directory: mobile
         env:
           VERSION: ${{ needs.release.outputs.version }}
-          BUILD_NUM: ${{ github.run_number }}
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           npm install --no-package-lock --no-audit --no-fund
           npx cap add android
           npx cap sync android
-          node -e '
-            const fs = require("node:fs");
-            const p = "android/app/build.gradle";
-            let gradle = fs.readFileSync(p, "utf8");
-            gradle = gradle.replace(/versionCode\s+\d+/, `versionCode ${process.env.BUILD_NUM}`);
-            gradle = gradle.replace(/versionName\s+"[^"]+"/, `versionName "${process.env.VERSION}"`);
-            fs.writeFileSync(p, gradle);
-          '
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > /tmp/custom-release.keystore
+            export ANDROID_KEYSTORE_PATH="/tmp/custom-release.keystore"
+          fi
+          node scripts/configure-android.mjs
 
-      - name: Compile Android APK
+      - name: Compile signed Android Release APK
         working-directory: mobile/android
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug
+          ./gradlew assembleRelease
 
       - name: Upload Android APK to GitHub Release
         env:
@@ -281,7 +281,7 @@ jobs:
           TAG: ${{ needs.release.outputs.tag }}
           VERSION: ${{ needs.release.outputs.version }}
         run: |
-          cp mobile/android/app/build/outputs/apk/debug/app-debug.apk "Tamagotchi-v${VERSION}-Android.apk"
+          cp mobile/android/app/build/outputs/apk/release/app-release.apk "Tamagotchi-v${VERSION}-Android.apk"
           gh release upload "$TAG" "Tamagotchi-v${VERSION}-Android.apk" --clobber
 
   build-ios:

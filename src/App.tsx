@@ -86,10 +86,13 @@ function AppShell() {
                 updater={{
                   currentVersion: updater.currentVersion,
                   platform: updater.platform,
+                  isNativeAndroid: updater.isNativeAndroid,
                   recommendedAsset: updater.recommendedAsset,
                   githubRepo: updater.githubRepo,
                   status: updater.status,
                   latestRelease: updater.latestRelease,
+                  downloadProgress: updater.downloadProgress,
+                  updateNotice: updater.updateNotice,
                   updateAvailable: updater.updateAvailable,
                   offlineReady: updater.offlineReady,
                   lastCheckedAt: updater.lastCheckedAt,
@@ -108,7 +111,9 @@ function AppShell() {
       <UpdateBanner
         visible={updater.updateAvailable && !updater.bannerDismissed}
         latestRelease={updater.latestRelease}
-        isUpdating={updater.status === 'updating'}
+        status={updater.status}
+        downloadProgress={updater.downloadProgress}
+        updateNotice={updater.updateNotice}
         onUpdateNow={() => void updater.applyUpdate()}
         onOpenSettings={() => {
           setActiveTab('settings');

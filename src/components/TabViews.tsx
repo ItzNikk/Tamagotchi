@@ -1,5 +1,6 @@
 import type {
   DevicePlatform,
+  DownloadProgress,
   ReleaseAsset,
   ReleaseInfo,
   UpdateStatus,
@@ -12,10 +13,13 @@ import { LiquidGlassSurface } from './LiquidGlassSurface';
 export interface UpdaterViewProps {
   currentVersion: string;
   platform: DevicePlatform;
+  isNativeAndroid: boolean;
   recommendedAsset: ReleaseAsset | null;
   githubRepo: string;
   status: UpdateStatus;
   latestRelease: ReleaseInfo | null;
+  downloadProgress: DownloadProgress | null;
+  updateNotice: string | null;
   updateAvailable: boolean;
   offlineReady: boolean;
   lastCheckedAt: Date | null;
